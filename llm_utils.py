@@ -56,3 +56,32 @@ def ollama_generate_title(text):
     except Exception as e:
         print("Ollama title exception:", e)
         return "Untitled Note"
+
+
+def ollama_generate_tags(text):
+    """Generate comma-separated tags for the given text using Ollama."""
+    if not text or not text.strip():
+        return ""
+    prompt = (
+        "Generate a short comma-separated list of 3-5 tags for the following note or transcript. "
+        "Respond with tags only, no additional words.\n\n"
+        f"{text}\n\nTags:"
+    )
+    try:
+        resp = requests.post(
+            OLLAMA_API_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": True},
+            timeout=60,
+        )
+        tags = ""
+        for line in resp.iter_lines():
+            if line:
+                obj = json.loads(line.decode("utf-8"))
+                if "response" in obj:
+                    tags += obj["response"]
+        # Normalize spacing and remove any trailing punctuation
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        return ",".join(tag_list)
+    except Exception as e:
+        print("Ollama tag exception:", e)
+        return ""

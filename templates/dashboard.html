@@ -71,7 +71,10 @@
           <input type="text" name="note" id="note" placeholder="Type a note or thought..." class="rounded-lg border border-[#232c4e] bg-[#232c4e] text-blue-100 px-3 py-2 placeholder:text-blue-400 focus:ring-2 focus:ring-blue-400 focus:outline-none w-full">
         </div>
         <div class="flex flex-col gap-2 w-40">
-          <label for="tags" class="text-blue-200 text-xs font-semibold">Tags</label>
+          <label for="tags" class="text-blue-200 text-xs font-semibold flex justify-between items-center">
+            Tags
+            <button type="button" id="suggestTags" class="text-pink-300 hover:text-pink-400 text-xs underline">Suggest</button>
+          </label>
           <input type="text" name="tags" id="tags" placeholder="comma,separated" class="rounded-lg border border-[#232c4e] bg-[#232c4e] text-blue-100 px-3 py-2 placeholder:text-blue-400 focus:ring-2 focus:ring-blue-400 focus:outline-none w-full">
         </div>
         <div class="flex flex-col gap-2">
@@ -195,7 +198,22 @@
     const recordStatus = document.getElementById('recordStatus');
     const fileInput = document.getElementById('file');
     const form = document.getElementById('quickCaptureForm');
+    const suggestTagsBtn = document.getElementById('suggestTags');
+    const noteInput = document.getElementById('note');
+    const tagsInput = document.getElementById('tags');
     let recording = false;
+
+    suggestTagsBtn.onclick = async function() {
+      const text = noteInput.value;
+      if (!text.trim()) return;
+      const resp = await fetch('/suggest_tags', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text})
+      });
+      const data = await resp.json();
+      tagsInput.value = data.tags || '';
+    };
 
     recordBtn.onclick = async function() {
       if (!recording) {

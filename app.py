@@ -8,7 +8,11 @@ from fastapi.staticfiles import StaticFiles
 from collections import defaultdict
 import subprocess
 import os
-from llm_utils import ollama_summarize, ollama_generate_title
+from llm_utils import (
+    ollama_summarize,
+    ollama_generate_title,
+    ollama_generate_tags,
+)
 from markupsafe import Markup, escape
 import re
 
@@ -202,6 +206,9 @@ async def capture(
         summary = ollama_summarize(content)
         audio_filename = None
 
+    if not tags.strip():
+        tags = ollama_generate_tags(content)
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"About to insert note. Title: '{title}', summary: '{summary}', audio_filename: '{audio_filename}'")
     conn = get_conn()
@@ -219,6 +226,13 @@ async def capture(
     conn.commit()
     conn.close()
     return RedirectResponse("/", status_code=302)
+
+
+@app.post("/suggest_tags")
+async def suggest_tags(data: dict = Body(...)):
+    text = data.get("text", "")
+    tags = ollama_generate_tags(text)
+    return {"tags": tags}
 
 @app.post("/webhook/apple")
 async def webhook_apple(data: dict = Body(...)):
