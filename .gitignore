@@ -3,4 +3,5 @@ __pycache__/
 *.db
 audio/
 *.pyc
-.DS_Store
+.DS_Store.DS_Store
+__pycache__/
