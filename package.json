@@ -1,0 +1,16 @@
+{
+  "name": "second_brain_premium",
+  "version": "1.0.0",
+  "description": "Your AI-powered note-taking companion with local LLM processing, audio transcription, and knowledge management.",
+  "main": "index.js",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i ./static/css/tailwind.css -o ./static/css/style.css --minify"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "tailwindcss": "^3.4.4"
+  }
+}
