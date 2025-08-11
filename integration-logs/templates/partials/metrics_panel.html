@@ -1,0 +1,16 @@
+<div class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow ring-1 ring-black/5 p-4">
+  <div class="flex items-center justify-between">
+    <h3 class="text-sm font-medium text-slate-900 dark:text-white">Last {{ data|length }} days</h3>
+    <a class="text-xs hover:underline text-slate-600 dark:text-slate-300" href="/metrics/notes.csv">CSV</a>
+  </div>
+  <div class="mt-2 flex items-end gap-4">
+    <svg width="360" height="64" viewBox="0 0 360 64" class="rounded bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      <polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ points }}"></polyline>
+    </svg>
+    <div class="text-sm text-slate-600 dark:text-slate-300">
+      <div>Total: <b>{{ total }}</b></div>
+      <div>Today: <b>{{ today }}</b></div>
+      <div>Max/day: <b>{{ maxv }}</b></div>
+    </div>
+  </div>
+</div>

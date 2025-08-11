@@ -1,0 +1,20 @@
+:root{
+  --brand: var(--brand-raw, #4f46e5);
+  --brand-700: color-mix(in srgb, var(--brand) 90%, #000);
+  --brand-600: var(--brand);
+  --brand-500: color-mix(in srgb, var(--brand) 85%, #fff);
+}
+:root[data-theme="dark"]{ color-scheme: dark; }
+.bg-brand-600{ background-color: var(--brand-600); }
+.text-brand-600{ color: var(--brand-600); }
+.border-brand-600{ border-color: var(--brand-600); }
+.badge{ display:inline-block; padding:.15rem .45rem; border-radius:.5rem; font-size:.75rem; background:rgba(0,0,0,.05);}
+.toast{ position:fixed; right:1rem; bottom:1rem; z-index:50; background:#111827; color:#fff; padding:.75rem 1rem; border-radius:.75rem; box-shadow:0 10px 20px rgba(0,0,0,.2); margin-top:.5rem;}
+.kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:.75rem; padding:.1rem .35rem; border:1px solid rgba(0,0,0,.2); border-bottom-width:2px; border-radius:.375rem; background:#fff; color:#111827;}
+/* Command palette */
+#cmdk{ position:fixed; inset:0; display:none; align-items:flex-start; justify-content:center; padding-top:10vh; background:rgba(0,0,0,.35); z-index:60;}
+#cmdk .panel{ width:min(680px, 92vw); background:#0b1020; color:#eef2ff; border:1px solid rgba(255,255,255,.08); border-radius:12px; overflow:hidden; }
+#cmdk input{ width:100%; padding:12px 14px; background:#0f172a; color:#e2e8f0; border:none; outline:none; }
+#cmdk ul{ max-height:50vh; overflow:auto; }
+#cmdk li{ padding:10px 12px; border-top:1px solid rgba(255,255,255,.06); cursor:pointer; }
+#cmdk li:hover{ background:#111827; }

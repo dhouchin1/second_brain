@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Tags — Second Brain Premium{% endblock %}
+{% block content %}
+<div class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow-xl ring-1 ring-black/5 p-6">
+  <h1 class="text-xl font-semibold text-slate-900 dark:text-white">Tags</h1>
+  <div class="mt-4 flex flex-wrap gap-2">
+    {% for t in tags %}
+      <a href="/notes?tag={{ t.name }}" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700">
+        <span>#{{ t.name }}</span>
+        <span class="text-xs text-slate-500">{{ t.usage }}</span>
+      </a>
+    {% else %}
+      <div class="text-slate-500">No tags yet.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

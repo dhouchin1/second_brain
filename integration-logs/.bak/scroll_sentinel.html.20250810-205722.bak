@@ -1,0 +1,17 @@
+{% if q %}
+  <div class="mt-4 h-10 flex items-center justify-center"
+       hx-get="/search?q={{ q | urlencode }}&page={{ next_page }}{% if embed %}&embed=1{% endif %}"
+       hx-trigger="revealed once"
+       hx-target="#notes-list"
+       hx-swap="beforeend">
+    <div class="animate-pulse text-white/70">Loading…</div>
+  </div>
+{% else %}
+  <div class="mt-4 h-10 flex items-center justify-center"
+       hx-get="/notes?page={{ next_page }}{% if tag %}&tag={{ tag }}{% endif %}"
+       hx-trigger="revealed once"
+       hx-target="#notes-list"
+       hx-swap="beforeend">
+    <div class="animate-pulse text-white/70">Loading…</div>
+  </div>
+{% endif %}

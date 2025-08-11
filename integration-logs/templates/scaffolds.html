@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Scaffolds — Second Brain Premium{% endblock %}
+{% block content %}
+<div class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow-xl ring-1 ring-black/5 p-6">
+  <h1 class="text-xl font-semibold">Scaffold scripts</h1>
+  <ul class="mt-4 divide-y divide-slate-200/80 dark:divide-white/10">
+    {% for s in scaffolds %}
+      <li class="py-3 flex items-center justify-between">
+        <div>
+          <div class="font-medium">{{ s.name }}</div>
+          <div class="text-xs text-slate-500">size {{ s.size }} • sha {{ s.hash }}</div>
+        </div>
+      </li>
+    {% else %}
+      <li class="py-6 text-slate-500">No scaffold scripts found in /scripts.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}
