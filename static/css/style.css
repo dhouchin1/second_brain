@@ -1,0 +1,76 @@
+/* Tailwind CSS build output (manual placeholder) */
+
+/* Typography */
+.font-sans { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"; }
+.text-white { color: #ffffff; }
+.text-gray-800 { color: #1f2937; }
+.text-gray-600 { color: #4b5563; }
+.text-indigo-600 { color: #4f46e5; }
+.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+.text-lg { font-size: 1.125rem; line-height: 1.75rem; }
+.text-2xl { font-size: 1.5rem; line-height: 2rem; }
+.text-4xl { font-size: 2.25rem; line-height: 2.5rem; }
+
+/* Layout & Spacing */
+.min-h-screen { min-height: 100vh; }
+.p-5 { padding: 1.25rem; }
+.p-8 { padding: 2rem; }
+.p-3 { padding: 0.75rem; }
+.px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+.py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+.py-5 { padding-top: 1.25rem; padding-bottom: 1.25rem; }
+.mb-10 { margin-bottom: 2.5rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 2rem; }
+.space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+.mx-auto { margin-left: auto; margin-right: auto; }
+.max-w-5xl { max-width: 64rem; }
+.w-full { width: 100%; }
+.min-h-\[100px\] { min-height: 100px; }
+
+/* Flex */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+
+/* Border & Radius */
+.border { border-width: 1px; border-style: solid; border-color: #e5e7eb; }
+.border-gray-300 { border-color: #d1d5db; }
+.border-gray-200 { border-color: #e5e7eb; }
+.border-b { border-bottom-width: 1px; }
+.last\:border-b-0:last-child { border-bottom-width: 0; }
+.rounded { border-radius: 0.25rem; }
+.rounded-xl { border-radius: 0.75rem; }
+
+/* Backgrounds */
+.bg-white { background-color: #ffffff; }
+.bg-gradient-to-br { background-image: linear-gradient(to bottom right, var(--from-color, #000), var(--to-color, #000)); }
+.bg-gradient-to-r { background-image: linear-gradient(to right, var(--from-color, #000), var(--to-color, #000)); }
+.from-indigo-500 { --from-color: #6366f1; }
+.to-purple-600 { --to-color: #9333ea; }
+
+/* Shadows */
+.shadow-lg { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05); }
+
+/* Transforms & Transitions */
+.hover\:translate-y-\[-2px\]:hover { transform: translateY(-2px); }
+.transition { transition: all 0.2s ease; }
+
+/* Note animations */
+.note-card {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.note-card.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.note-card:hover {
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+
+/* Utility */
+.text-center { text-align: center; }
+
