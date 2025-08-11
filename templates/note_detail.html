@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Note #{{ note.id }} — Second Brain Premium{% endblock %}
+{% block content %}
+<article class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow-xl ring-1 ring-black/5 p-6">
+  <header class="mb-3">
+    <div class="text-xs text-slate-500">{{ note.created_at }}</div>
+    <h1 class="text-xl font-semibold text-slate-900 dark:text-white">Note #{{ note.id }}</h1>
+    {% if note.tags %}
+      <div class="mt-2">
+        {% for t in note.tags.split(',') if t.strip() %}
+          <a href="/notes?tag={{ t.strip() }}" class="inline-block mr-2 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800">#{{ t.strip() }}</a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </header>
+  <div class="prose prose-slate max-w-none dark:prose-invert whitespace-pre-wrap">
+    {{ note.body }}
+  </div>
+  <footer class="mt-6">
+    <a href="/notes" class="text-sm text-slate-600 hover:underline dark:text-slate-300">← Back to notes</a>
+  </footer>
+</article>
+{% endblock %}

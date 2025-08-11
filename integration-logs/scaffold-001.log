@@ -1,0 +1,17 @@
+==> Writing Python app (FastAPI + Ollama tag suggestions)…
+  • Backed up app.py -> app.py.20250810-201525.bak
+==> Writing templates…
+  • Backed up templates/dashboard.html -> templates/dashboard.html.20250810-201525.bak
+==> Writing static JS (theme + tag editor + LLM suggestions)…
+==> Writing requirements.txt…
+  • Backed up requirements.txt -> requirements.txt.20250810-201525.bak
+==> Done.
+
+Quick start:
+  python3 -m venv .venv && source .venv/bin/activate
+  pip install -r requirements.txt
+  # (optional) export OLLAMA_BASE_URL and OLLAMA_MODEL
+  uvicorn app:app --reload --host 0.0.0.0 --port 8084
+
+Open http://localhost:8084
+

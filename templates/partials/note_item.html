@@ -1,0 +1,19 @@
+<li class="py-4 flex items-start gap-4">
+  <div class="flex-1">
+    <a href="/notes/{{ n.id }}" class="block text-slate-900 dark:text-white font-medium hover:underline">
+      {{ (n.body[:140] ~ ('…' if n.body|length > 140 else '')) | e }}
+    </a>
+    <div class="mt-1 text-xs text-slate-500">
+      {{ n.created_at }}
+      {% if n.tags %}
+        •
+        {% for t in n.tags.split(',') if t.strip() %}
+          <a href="/notes?tag={{ t.strip() }}"
+             class="inline-block ml-1 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700">
+            #{{ t.strip() }}
+          </a>
+        {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+</li>

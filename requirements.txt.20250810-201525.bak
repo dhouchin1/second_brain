@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+jinja2
+watchdog
+python-frontmatter
+requests
+pydantic
+pydantic-settings
+passlib[bcrypt]
+python-jose
