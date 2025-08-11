@@ -7,3 +7,9 @@ audio/
 # Local artifacts
 backups/
 *.bundle
+
+# local
+.DS_Store
+__pycache__/
+backups/
+*.bundle

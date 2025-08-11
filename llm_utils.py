@@ -2,80 +2,64 @@ import requests
 import json
 from config import settings
 
-
 def ollama_summarize(text, prompt=None):
-    """Return summary, tags and actions extracted from *text* using Ollama."""
-    print(f"[ollama_summarize] Called with text: {repr(text[:200])}")
+    """Generate a summary using Ollama"""
     if not text or not text.strip():
-        return {"summary": "", "tags": [], "actions": []}
-
-    system_prompt = (
-        prompt
-        or "Summarize and extract tags and action items from this transcript of conversation snippet or note."
-    )
+        return ""
+    
+    system_prompt = prompt or "Summarize this text concisely:"
     data = {
         "model": settings.ollama_model,
-        "prompt": (
-            f"{system_prompt}\n\n{text}\n\n"
-            "Respond in JSON with keys 'summary', 'tags', and 'actions'."
-        ),
+        "prompt": f"{system_prompt}\n\n{text}\n\nSummary:",
+        "stream": False
     }
+    
     try:
-        resp = requests.post(settings.ollama_api_url, json=data, stream=True, timeout=120)
-        output = ""
-        for line in resp.iter_lines():
-            if line:
-                try:
-                    obj = json.loads(line.decode("utf-8"))
-                    if "response" in obj:
-                        output += obj["response"]
-                except Exception as e:
-                    print("Ollama stream parse error:", e, line)
-        output = output.strip()
-        try:
-            parsed = json.loads(output)
-        except json.JSONDecodeError:
-            print("Ollama JSON decode failed, returning raw text")
-            return {"summary": output, "tags": [], "actions": []}
-
-        summary = parsed.get("summary", "").strip()
-        tags = parsed.get("tags", []) or []
-        actions = parsed.get("actions", []) or []
-        if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",") if t.strip()]
-        if isinstance(actions, str):
-            actions = [a.strip() for a in actions.splitlines() if a.strip()]
-        result = {"summary": summary, "tags": tags, "actions": actions}
-        print(f"[ollama_summarize] Returning: {result}")
-        return result
+        resp = requests.post(settings.ollama_api_url, json=data, timeout=30)
+        if resp.status_code == 200:
+            result = resp.json()
+            return result.get("response", "").strip()
     except Exception as e:
-        print("Ollama exception:", e)
-    return {"summary": "", "tags": [], "actions": []}
-
+        print(f"Ollama error: {e}")
+    return ""
 
 def ollama_generate_title(text):
+    """Generate a title for the given text"""
     if not text or not text.strip():
-        return "Untitled Note"
-    prompt = (
-        "Generate a concise, descriptive title (max 10 words) for the following note or meeting transcript. "
-        "Avoid generic phrases like 'Meeting Transcript' or 'Recording.' "
-        "Only respond with the title, no extra commentary.\n\n"
-        f"{text}\n\nTitle:"
-    )
+        return "Untitled"
+    
+    prompt = f"Generate a short title (max 10 words) for:\n{text[:500]}\n\nTitle:"
+    
     try:
         resp = requests.post(
             settings.ollama_api_url,
-            json={"model": settings.ollama_model, "prompt": prompt, "stream": True},
-            timeout=60,
+            json={"model": settings.ollama_model, "prompt": prompt, "stream": False},
+            timeout=30
         )
-        title = ""
-        for line in resp.iter_lines():
-            if line:
-                obj = json.loads(line.decode("utf-8"))
-                if "response" in obj:
-                    title += obj["response"]
-        return title.strip().strip('"') or "Untitled Note"
+        if resp.status_code == 200:
+            result = resp.json()
+            return result.get("response", "").strip() or "Untitled"
     except Exception as e:
-        print("Ollama title exception:", e)
-        return "Untitled Note"
+        print(f"Ollama error: {e}")
+    return "Untitled"
 
+def ollama_suggest_tags(text):
+    """Suggest tags for the given text"""
+    if not text or not text.strip():
+        return []
+    
+    prompt = f"Suggest 3-5 tags for:\n{text[:500]}\n\nTags (comma-separated):"
+    
+    try:
+        resp = requests.post(
+            settings.ollama_api_url,
+            json={"model": settings.ollama_model, "prompt": prompt, "stream": False},
+            timeout=30
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            tags_str = result.get("response", "").strip()
+            return [tag.strip() for tag in tags_str.split(",") if tag.strip()][:5]
+    except Exception as e:
+        print(f"Ollama error: {e}")
+    return []

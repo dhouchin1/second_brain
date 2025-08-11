@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Audit — Second Brain Premium{% endblock %}
+{% block content %}
+<div class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow-xl ring-1 ring-black/5 p-6">
+  <h1 class="text-xl font-semibold">Audit log</h1>
+  <table class="mt-4 w-full text-sm">
+    <thead><tr class="text-left border-b dark:border-slate-800">
+      <th class="py-2">Time (UTC)</th><th>Action</th><th>Note</th><th>Meta</th>
+    </tr></thead>
+    <tbody>
+      {% for r in rows %}
+        <tr class="border-b dark:border-slate-800">
+          <td class="py-2">{{ r.created_at }}</td>
+          <td><span class="badge">{{ r.action }}</span></td>
+          <td>{% if r.note_id %}<a class="hover:underline" href="/notes/{{ r.note_id }}">#{{ r.note_id }}</a>{% else %}—{% endif %}</td>
+          <td><code class="text-xs">{{ r.meta }}</code></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="py-6 text-slate-500">No activity yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

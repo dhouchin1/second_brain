@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Compare — Second Brain Premium{% endblock %}
+{% block content %}
+<div class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow-xl ring-1 ring-black/5 p-6">
+  <h1 class="text-xl font-semibold">Feature Matrix</h1>
+  <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-6">
+    <section class="border rounded-xl p-4 dark:border-slate-800">
+      <h2 class="font-medium">Database</h2>
+      <ul class="mt-2 space-y-1 text-sm">
+        {% for k,v in tables.items() %}
+          <li> {{ k }}:
+            {% if v %}<span class="badge" style="background: #DCFCE7; color:#065F46;">present</span>{% else %}
+            <span class="badge" style="background: #FEE2E2; color:#991B1B;">missing</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+    <section class="border rounded-xl p-4 dark:border-slate-800">
+      <h2 class="font-medium">Files</h2>
+      <ul class="mt-2 space-y-1 text-sm">
+        <li>discord_bot.py: {% if files.discord_bot %}<span class="badge" style="background:#E0E7FF;color:#3730A3;">ok</span>{% else %}<span class="badge" style="background:#FEE2E2;color:#991B1B;">no</span>{% endif %}</li>
+        <li>sb.py (CLI): {% if files.cli %}<span class="badge" style="background:#E0E7FF;color:#3730A3;">ok</span>{% else %}<span class="badge" style="background:#FEE2E2;color:#991B1B;">no</span>{% endif %}</li>
+        <li>Makefile: {% if files.makefile %}<span class="badge" style="background:#E0E7FF;color:#3730A3;">ok</span>{% else %}<span class="badge" style="background:#FEE2E2;color:#991B1B;">no</span>{% endif %}</li>
+        <li>static/app.js: {% if files.static_app_js %}<span class="badge" style="background:#E0E7FF;color:#3730A3;">ok</span>{% else %}<span class="badge" style="background:#FEE2E2;color:#991B1B;">no</span>{% endif %}</li>
+        <li>static/brand.css: {% if files.brand_css %}<span class="badge" style="background:#E0E7FF;color:#3730A3;">ok</span>{% else %}<span class="badge" style="background:#FEE2E2;color:#991B1B;">no</span>{% endif %}</li>
+      </ul>
+    </section>
+    <section class="border rounded-xl p-4 dark:border-slate-800">
+      <h2 class="font-medium">Endpoints</h2>
+      <ul class="mt-2 space-y-1 text-sm">
+        {% for k,v in endpoints.items() %}
+          <li>{{ k }}:
+            {% if v %}<span class="badge" style="background:#DBEAFE;color:#1E3A8A;">exists</span>
+            {% else %}<span class="badge" style="background:#FEE2E2;color:#991B1B;">missing</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  <h2 class="mt-8 text-lg font-semibold">Applied Scaffolds</h2>
+  <table class="mt-2 w-full text-sm">
+    <thead><tr class="text-left border-b dark:border-slate-800">
+      <th class="py-2">File</th><th>Size</th><th>SHA-256 (12)</th>
+    </tr></thead>
+    <tbody>
+      {% for s in scaffolds %}
+        <tr class="border-b dark:border-slate-800">
+          <td class="py-2"><a class="hover:underline" href="/scaffolds">{{ s.name }}</a></td>
+          <td>{{ s.size }}</td>
+          <td><code>{{ s.hash }}</code></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="py-4 text-slate-500">No scaffold_*.sh files found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

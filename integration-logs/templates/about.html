@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}About — Second Brain Premium{% endblock %}
+{% block content %}
+<div class="rounded-2xl bg-white/95 dark:bg-slate-950/90 shadow-xl ring-1 ring-black/5 p-6 space-y-4">
+  <h1 class="text-xl font-semibold">About this instance</h1>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="p-4 border rounded-xl dark:border-slate-800">
+      <div class="text-sm text-slate-500">Notes</div>
+      <div class="text-2xl font-semibold">{{ stats.notes }}</div>
+    </div>
+    <div class="p-4 border rounded-xl dark:border-slate-800">
+      <div class="text-sm text-slate-500">Tags</div>
+      <div class="text-2xl font-semibold">{{ stats.tags }}</div>
+    </div>
+    <div class="p-4 border rounded-xl dark:border-slate-800">
+      <div class="text-sm text-slate-500">Embedded</div>
+      <div class="text-2xl font-semibold">{{ stats.embedded }}</div>
+    </div>
+  </div>
+  <div class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+    Auth mode: <b>{{ info.auth_mode }}</b> • Ollama: <code>{{ info.ollama_base }}</code> • Embed model: <code>{{ info.embed_model }}</code>
+  </div>
+  <form class="mt-6 flex items-end gap-3" method="post" action="/theme/apply" onsubmit="localStorage.setItem('sb.brand', brand.value)">
+    <div>
+      <label class="block text-sm mb-1">Brand color (hex)</label>
+      <input name="brand" id="brand" placeholder="#4f46e5" class="rounded-xl border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 px-3 py-2">
+    </div>
+    <div>
+      <label class="block text-sm mb-1">Theme</label>
+      <select name="mode" class="rounded-xl border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 px-3 py-2">
+        <option value="">(leave)</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+        <option value="auto">Auto</option>
+      </select>
+    </div>
+    <button class="px-3 py-2 rounded-xl bg-brand-600 text-white">Apply</button>
+  </form>
+</div>
+{% endblock %}
