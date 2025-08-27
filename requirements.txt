@@ -9,5 +9,10 @@ pydantic-settings
 passlib[bcrypt]
 python-jose
 python-multipartsentence-transformers>=2.2.2
+discord.py==2.3.2
+aiohttp==3.9.0
+sentence-transformers>=2.2.2
 discord.py>=2.3.2
 aiohttp>=3.9.0
+python-frontmatter>=1.0.0
+watchdog>=3.0.0
