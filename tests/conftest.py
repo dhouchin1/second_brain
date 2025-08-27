@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
 import sqlite3
-from app import app, get_conn
+from app_v00 import app, get_conn
 
 @pytest.fixture
 def client():
