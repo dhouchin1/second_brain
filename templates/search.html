@@ -3,6 +3,7 @@
 {% block head_extra %}
   <link rel="stylesheet" href="/static/css/design-system.css">
   <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/advanced-search.css">
   <style>
     body { background: #0f172a; font-family: 'Inter', Arial, sans-serif; }
     ::-webkit-scrollbar { width: 8px; background: #0b1220; }
@@ -50,6 +51,60 @@
       border-radius: 0.25rem;
       font-weight: 500;
     }
+    
+    /* Search suggestions styling */
+    .search-suggestions {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 50;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-8px);
+      transition: all 0.2s ease-out;
+      margin-top: 4px;
+    }
+    
+    .search-suggestions.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+    
+    .suggestions-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    
+    .suggestion-item {
+      transition: background-color 0.15s ease;
+    }
+    
+    .suggestion-item:hover {
+      background-color: #475569 !important;
+    }
+    
+    /* Scrollbar styling for suggestions */
+    .suggestions-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .suggestions-list::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    
+    .suggestions-list::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 3px;
+    }
+    
+    .suggestions-list::-webkit-scrollbar-thumb:hover {
+      background: #64748b;
+    }
   </style>
 {% endblock %}
 {% block body_class %}min-h-screen text-slate-100 bg-slate-900{% endblock %}
@@ -86,7 +141,7 @@
                 </svg>
               </button>
             </div>
-            <div id="search-suggestions" class="search-suggestions"></div>
+            <div id="search-suggestions" class="search-suggestions relative z-50"></div>
           </div>
 
           <!-- Search Mode -->

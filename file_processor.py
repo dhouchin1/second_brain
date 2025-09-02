@@ -5,6 +5,7 @@ Handles images, PDFs, and documents with OCR and text extraction
 """
 
 import io
+import uuid
 import hashlib
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
@@ -307,16 +308,17 @@ class FileProcessor:
     
     def generate_safe_filename(self, original_filename: str, mime_type: str) -> str:
         """Generate a safe, unique filename for storage"""
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        
-        # Hash the original filename for uniqueness
-        file_hash = hashlib.md5(original_filename.encode()).hexdigest()[:8]
+        # Include microseconds and a short random suffix to avoid collisions
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S-%f")
+        rand = uuid.uuid4().hex[:6]
+        # Hash the original filename for stability across browsers that reuse names
+        file_hash = hashlib.md5(original_filename.encode()).hexdigest()[:6]
         
         # Get appropriate extension
         all_supported = {**self.SUPPORTED_IMAGE_TYPES, **self.SUPPORTED_DOCUMENT_TYPES, **self.SUPPORTED_AUDIO_TYPES}
         extension = all_supported.get(mime_type, '.bin')
         
-        return f"{timestamp}-{file_hash}{extension}"
+        return f"{timestamp}-{file_hash}{rand}{extension}"
     
     def save_file(self, file_content: bytes, file_info: Dict[str, Any]) -> Tuple[Path, str]:
         """

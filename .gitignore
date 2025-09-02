@@ -1,29 +1,103 @@
+# Virtual environment
 venv/
 __pycache__/
-*.db
-audio/
 *.pyc
-.DS_Store
-# Local artifacts
+*.pyo
+*.pyd
+.Python
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and configuration
+.env
+.env.local
+.env.*.local
+config.local.py
+
+# Sensitive data and keys
+*.key
+*.pem
+*.p12
+*.pfx
+api_keys.txt
+secrets.json
+credentials.json
+private_keys/
+.secrets/
+
+# Audio, media, and uploads
+audio/
+uploads/
+screenshots/
+attachments/
+media/
+*.wav
+*.mp3
+*.mp4
+*.webm
+
+# User content and data
+vault/
+notes/
 backups/
-*.bundle
+exports/
+archive/
+
+# Logs and debugging
+*.log
+*.logs
 /.logs/
-/.scaffolds/
+server.log
+debug.log
+error.log
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
 /.bak/
 *.bak
-*.log
-server.log
-.env
-uploads/
-vault/
-screenshots/
+*.bundle
 
-# Scaffold files
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Scaffold files and scripts
+scripts/scaffolds/
+/.scaffolds/
 scripts/scaffolds/inactive/
 scripts/scaffolds/run_scaffolds_v4.sh
 scripts/scaffolds/scaffold_*.sh
 
+# Test coverage
+.coverage
+htmlcov/
 
+# SSL certificates
+*.crt
+*.cert
+*.ca-bundle
 
-# Just completely ignore all scaffolds
-scripts/scaffolds/
+# Local development files
+local/
+.local/
+dev_notes.md
+TODO_private.md

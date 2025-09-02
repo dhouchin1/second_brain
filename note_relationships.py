@@ -60,8 +60,8 @@ class NoteRelationshipEngine:
         """Lazy load semantic search"""
         if self._semantic_search is None:
             try:
-                from semantic_search import SemanticSearchEngine
-                self._semantic_search = SemanticSearchEngine(self.db_path)
+                from services.search_adapter import SearchService
+                self._semantic_search = SearchService(self.db_path)
             except ImportError:
                 logger.warning("Semantic search not available")
                 return None

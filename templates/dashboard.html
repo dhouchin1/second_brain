@@ -198,6 +198,18 @@
             </div>
             <a href="/search" class="text-xs text-indigo-300 hover:underline">View all</a>
           </div>
+          
+          <!-- Transcription Status Widget -->
+          <div id="transcriptionStatus" class="mb-3 p-3 bg-slate-800/40 rounded-lg border border-slate-700">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-medium text-slate-300">Audio Processing</h4>
+              <button id="refreshQueue" class="text-xs text-indigo-300 hover:text-indigo-200 transition">Refresh</button>
+            </div>
+            <div id="queueStatus" class="space-y-2">
+              <div class="text-xs text-slate-400">Loading...</div>
+            </div>
+          </div>
+          
         <div class="recent-search-container mb-2">
           <input 
             type="text" 
@@ -1403,6 +1415,122 @@
         console.log('Submitting with file type:', fileType);
       }
     });
+    
+    // Transcription Queue Status
+    async function updateTranscriptionStatus() {
+      try {
+        const [queueResponse, batchResponse] = await Promise.all([
+          fetch('/api/audio-queue/status'),
+          fetch('/api/batch/status')
+        ]);
+        
+        // If not authenticated, show login message and stop polling
+        if (queueResponse.status === 401) {
+          const statusContainer = document.getElementById('queueStatus');
+          if (statusContainer) {
+            statusContainer.innerHTML = '<div class="text-xs text-slate-400"><a href="/login" class="text-indigo-300 hover:underline">Login</a> to see queue status</div>';
+          }
+          // Stop the polling interval to prevent 401 spam
+          if (window.transcriptionStatusInterval) {
+            clearInterval(window.transcriptionStatusInterval);
+            window.transcriptionStatusInterval = null;
+          }
+          return;
+        }
+        
+        if (!queueResponse.ok) return;
+        
+        const data = await queueResponse.json();
+        const batchData = batchResponse.ok ? await batchResponse.json() : null;
+        
+        const statusContainer = document.getElementById('queueStatus');
+        if (!statusContainer) return;
+        
+        const queueData = data.queue_status;
+        const recentAudio = data.recent_audio;
+        
+        let html = '';
+        
+        // Queue summary
+        const queued = queueData.status_counts?.queued || 0;
+        const processing = queueData.status_counts?.processing || 0;
+        const failed = queueData.status_counts?.failed || 0;
+        
+        if (queued === 0 && processing === 0) {
+          html += '<div class="text-xs text-slate-400">No audio files in queue</div>';
+        } else {
+          html += `<div class="text-xs text-slate-300 mb-2">`;
+          if (queued > 0) html += `<span class="text-yellow-300">${queued} queued</span>`;
+          if (processing > 0) {
+            if (queued > 0) html += ' • ';
+            html += `<span class="text-blue-300">${processing} processing</span>`;
+          }
+          if (failed > 0) {
+            if (queued > 0 || processing > 0) html += ' • ';
+            html += `<span class="text-red-300">${failed} failed</span>`;
+          }
+          html += `</div>`;
+          
+          // Batch processing status
+          if (batchData) {
+            html += '<div class="text-xs text-slate-400 mb-2">';
+            if (batchData.batch_mode_enabled) {
+              html += '<span class="text-green-300">Batch mode enabled</span>';
+              if (batchData.should_process_batch) {
+                html += ' • <span class="text-orange-300">Ready to batch</span>';
+              }
+              if (batchData.timer_active) {
+                html += ' • <span class="text-blue-300">Timer active</span>';
+              }
+              html += ` (threshold: ${batchData.batch_threshold})`;
+            } else {
+              html += '<span class="text-slate-500">Batch mode disabled</span>';
+            }
+            html += '</div>';
+          }
+        }
+        
+        // Recent audio files with progress
+        if (recentAudio && recentAudio.length > 0) {
+          const processingFiles = recentAudio.filter(f => f.status !== 'complete');
+          if (processingFiles.length > 0) {
+            html += '<div class="space-y-1">';
+            processingFiles.slice(0, 3).forEach(file => {
+              const statusText = file.status.split(':')[0];
+              const progress = file.progress_percent || 0;
+              html += `
+                <div class="text-xs">
+                  <div class="flex justify-between items-center mb-1">
+                    <span class="text-slate-300 truncate">${file.title}</span>
+                    <span class="text-slate-400">${progress}%</span>
+                  </div>
+                  <div class="w-full bg-slate-700 rounded-full h-1">
+                    <div class="bg-indigo-500 h-1 rounded-full transition-all" style="width: ${progress}%"></div>
+                  </div>
+                  <div class="text-slate-400 mt-1">${statusText.replace('_', ' ')}</div>
+                </div>
+              `;
+            });
+            html += '</div>';
+          }
+        }
+        
+        statusContainer.innerHTML = html;
+        
+      } catch (error) {
+        console.warn('Failed to update transcription status:', error);
+      }
+    }
+    
+    // Update transcription status on load and every 3 seconds
+    updateTranscriptionStatus();
+    window.transcriptionStatusInterval = setInterval(updateTranscriptionStatus, 3000);
+    
+    // Refresh button
+    const refreshBtn = document.getElementById('refreshQueue');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', updateTranscriptionStatus);
+    }
   </script>
 
   <!-- Footer -->

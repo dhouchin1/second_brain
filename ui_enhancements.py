@@ -182,8 +182,8 @@ class UIRelationshipEnhancer:
         
         try:
             # Use semantic search to find similar content
-            from semantic_search import get_search_engine
-            search_engine = get_search_engine()
+            from services.search_adapter import SearchService
+            search_engine = SearchService()
             
             # Search for similar content
             results = search_engine.semantic_search(

@@ -11,6 +11,9 @@ passlib[bcrypt]
 bcrypt>=3.2,<4.0
 python-jose
 python-multipart
+python-dotenv
+# System monitoring for health checks
+psutil>=5.9.0
 sentence-transformers>=2.2.2
 # Re-ranking and sparse search
 rank-bm25>=0.2.2
@@ -22,6 +25,7 @@ Pillow>=10.0.0
 pytesseract>=0.3.10
 PyPDF2>=3.0.0
 python-magic>=0.4.27
+psutil
 
 # Optional lightweight ASR backend (set transcriber=vosk)
 #vosk>=0.3.45

@@ -133,32 +133,288 @@ class AdvancedSearchInterface {
     return data && Array.isArray(data.suggestions) ? data.suggestions : [];
   }
 
+  async getQueryEnhancement(query) {
+    try {
+      const res = await fetch('/api/search/enhance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ query })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      console.warn('Query enhancement failed:', e);
+      return null;
+    }
+  }
+
   displaySuggestions(suggestions) {
     const container = document.getElementById('search-suggestions');
     if (!container) return;
     container.innerHTML = '';
-    const uniq = Array.from(new Set(suggestions || []));
-    if (!uniq.length) { this.hideSuggestions(); return; }
+    
+    // Handle both old format (strings) and new format (objects)
+    const normalizedSuggestions = (suggestions || []).map(s => {
+      if (typeof s === 'string') {
+        return { text: s, type: 'basic', icon: '🔍' };
+      }
+      return s;
+    });
+
+    if (!normalizedSuggestions.length) { 
+      this.hideSuggestions(); 
+      return; 
+    }
+
+    // Remove duplicates based on text
+    const uniqueSuggestions = [];
+    const seenTexts = new Set();
+    for (const sugg of normalizedSuggestions) {
+      if (!seenTexts.has(sugg.text.toLowerCase())) {
+        seenTexts.add(sugg.text.toLowerCase());
+        uniqueSuggestions.push(sugg);
+      }
+    }
+
     const ul = document.createElement('ul');
-    ul.className = 'suggestions-list';
-    uniq.forEach(s => {
+    ul.className = 'suggestions-list bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto';
+    
+    uniqueSuggestions.forEach(suggestion => {
       const li = document.createElement('li');
-      li.className = 'suggestion-item';
-      li.textContent = s;
+      li.className = 'suggestion-item flex items-center gap-3 px-4 py-3 hover:bg-slate-700 cursor-pointer border-b border-slate-700 last:border-b-0';
+      
+      const icon = document.createElement('span');
+      icon.className = 'text-sm';
+      icon.textContent = suggestion.icon || '🔍';
+      
+      const content = document.createElement('div');
+      content.className = 'flex-1 min-w-0';
+      
+      const text = document.createElement('div');
+      text.className = 'text-sm text-slate-100 truncate';
+      text.textContent = suggestion.text;
+      content.appendChild(text);
+      
+      // Add additional info based on type
+      if (suggestion.type === 'phrase' && suggestion.source) {
+        const source = document.createElement('div');
+        source.className = 'text-xs text-slate-400 truncate mt-1';
+        source.textContent = `from: ${suggestion.source}`;
+        content.appendChild(source);
+      } else if (suggestion.type === 'popular' && suggestion.count) {
+        const count = document.createElement('div');
+        count.className = 'text-xs text-slate-400 mt-1';
+        count.textContent = `${suggestion.count} searches`;
+        content.appendChild(count);
+      } else if (suggestion.type === 'semantic' && suggestion.score) {
+        const score = document.createElement('div');
+        score.className = 'text-xs text-slate-400 mt-1';
+        score.textContent = `similarity: ${suggestion.score}`;
+        content.appendChild(score);
+      }
+      
+      const typeLabel = document.createElement('span');
+      typeLabel.className = 'text-xs text-slate-500 capitalize px-2 py-1 bg-slate-900 rounded';
+      typeLabel.textContent = suggestion.type || 'suggestion';
+      
+      li.appendChild(icon);
+      li.appendChild(content);
+      li.appendChild(typeLabel);
+      
       li.addEventListener('click', () => {
         const input = document.getElementById('search-input');
-        if (input) input.value = s;
+        if (input) input.value = suggestion.text;
         this.hideSuggestions();
         this.performSearch();
       });
+      
       ul.appendChild(li);
     });
+    
+    // Add enhancement button if we have a query
+    const input = document.getElementById('search-input');
+    if (input && input.value.trim().length > 2) {
+      const enhanceButton = document.createElement('li');
+      enhanceButton.className = 'suggestion-item flex items-center gap-3 px-4 py-3 hover:bg-indigo-700 cursor-pointer border-t-2 border-indigo-500 bg-indigo-800';
+      enhanceButton.innerHTML = `
+        <span class="text-sm">🧠</span>
+        <div class="flex-1">
+          <div class="text-sm text-white font-medium">Enhance with AI</div>
+          <div class="text-xs text-indigo-200">Get smarter search suggestions</div>
+        </div>
+        <span class="text-xs text-indigo-300">AI</span>
+      `;
+      enhanceButton.addEventListener('click', () => this.showQueryEnhancement());
+      ul.appendChild(enhanceButton);
+    }
+    
     container.appendChild(ul);
     container.classList.add('visible');
   }
 
   hideSuggestions() { const c = document.getElementById('search-suggestions'); if (c) c.classList.remove('visible'); }
   showRecentSearches() { if (this.searchHistory.length > 0) this.displaySuggestions(this.searchHistory.slice(-5)); }
+
+  async showQueryEnhancement() {
+    const input = document.getElementById('search-input');
+    const query = input?.value?.trim();
+    if (!query) return;
+
+    this.hideSuggestions();
+    const container = document.getElementById('search-suggestions');
+    if (!container) return;
+
+    // Show loading state
+    container.innerHTML = `
+      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-lg p-4">
+        <div class="flex items-center gap-3">
+          <div class="animate-spin h-4 w-4 border-2 border-indigo-400 border-t-transparent rounded-full"></div>
+          <div class="text-sm text-slate-300">AI is enhancing your query...</div>
+        </div>
+      </div>
+    `;
+    container.classList.add('visible');
+
+    try {
+      const enhancement = await this.getQueryEnhancement(query);
+      if (!enhancement) {
+        this.hideSuggestions();
+        return;
+      }
+
+      this.displayQueryEnhancement(enhancement);
+    } catch (e) {
+      console.error('Query enhancement failed:', e);
+      this.hideSuggestions();
+    }
+  }
+
+  displayQueryEnhancement(enhancement) {
+    const container = document.getElementById('search-suggestions');
+    if (!container) return;
+
+    const div = document.createElement('div');
+    div.className = 'bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-80 overflow-y-auto';
+
+    let content = `
+      <div class="p-4 border-b border-slate-700">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-lg">🧠</span>
+          <h3 class="text-sm font-semibold text-slate-100">AI Query Enhancement</h3>
+          <span class="text-xs bg-indigo-600 text-white px-2 py-1 rounded">${enhancement.intent}</span>
+        </div>
+    `;
+
+    // Enhanced query
+    if (enhancement.enhanced_query && enhancement.enhanced_query !== document.getElementById('search-input')?.value) {
+      content += `
+        <div class="mb-3">
+          <div class="text-xs text-slate-400 mb-1">Enhanced Query</div>
+          <button class="w-full text-left bg-indigo-900 hover:bg-indigo-800 p-2 rounded border border-indigo-600 text-sm text-slate-100" 
+                  data-enhanced-query="${this.escape(enhancement.enhanced_query)}">
+            ${this.escape(enhancement.enhanced_query)}
+          </button>
+        </div>
+      `;
+    }
+
+    // Spelling corrections
+    if (enhancement.spelling_corrections && enhancement.spelling_corrections.length > 0) {
+      content += `
+        <div class="mb-3">
+          <div class="text-xs text-slate-400 mb-1">Did you mean?</div>
+          ${enhancement.spelling_corrections.map(correction => `
+            <button class="mr-2 mb-1 bg-amber-900 hover:bg-amber-800 px-2 py-1 rounded text-xs text-amber-100" 
+                    data-correction="${this.escape(correction)}">
+              ${this.escape(correction)}
+            </button>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    content += '</div>';
+
+    // Alternative queries
+    if (enhancement.alternative_queries && enhancement.alternative_queries.length > 0) {
+      content += `
+        <div class="p-4 border-b border-slate-700">
+          <div class="text-xs text-slate-400 mb-2">Alternative Phrasings</div>
+          <div class="space-y-1">
+            ${enhancement.alternative_queries.map(alt => `
+              <button class="w-full text-left bg-slate-700 hover:bg-slate-600 p-2 rounded text-sm text-slate-200" 
+                      data-alternative="${this.escape(alt)}">
+                ${this.escape(alt)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Suggested tags
+    if (enhancement.suggested_tags && enhancement.suggested_tags.length > 0) {
+      content += `
+        <div class="p-4 border-b border-slate-700">
+          <div class="text-xs text-slate-400 mb-2">Related Tags</div>
+          <div class="flex flex-wrap gap-1">
+            ${enhancement.suggested_tags.map(tag => `
+              <button class="bg-green-900 hover:bg-green-800 px-2 py-1 rounded text-xs text-green-100" 
+                      data-tag="${this.escape(tag)}">
+                🏷️ ${this.escape(tag)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Expansion terms
+    if (enhancement.expansion_terms && enhancement.expansion_terms.length > 0) {
+      content += `
+        <div class="p-4">
+          <div class="text-xs text-slate-400 mb-2">Related Terms</div>
+          <div class="flex flex-wrap gap-1">
+            ${enhancement.expansion_terms.map(term => `
+              <span class="bg-slate-700 px-2 py-1 rounded text-xs text-slate-300">
+                ${this.escape(term)}
+              </span>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    div.innerHTML = content;
+
+    // Add event listeners
+    div.addEventListener('click', (e) => {
+      const input = document.getElementById('search-input');
+      if (!input) return;
+
+      if (e.target.dataset.enhancedQuery) {
+        input.value = e.target.dataset.enhancedQuery;
+        this.hideSuggestions();
+        this.performSearch();
+      } else if (e.target.dataset.correction) {
+        input.value = e.target.dataset.correction;
+        this.hideSuggestions();
+        this.performSearch();
+      } else if (e.target.dataset.alternative) {
+        input.value = e.target.dataset.alternative;
+        this.hideSuggestions();
+        this.performSearch();
+      } else if (e.target.dataset.tag) {
+        this.addTagFilter(e.target.dataset.tag);
+        this.hideSuggestions();
+      }
+    });
+
+    container.innerHTML = '';
+    container.appendChild(div);
+    container.classList.add('visible');
+  }
 
   async performSearch() {
     this.hideSuggestions();

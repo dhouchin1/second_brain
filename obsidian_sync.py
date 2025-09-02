@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import hashlib
 import time
 from config import settings
-from obsidian_common import sanitize_filename
+from obsidian_common import sanitize_filename, dump_frontmatter_file, load_frontmatter_file
 import json
 
 @dataclass
@@ -63,11 +63,15 @@ class ObsidianSync:
         if not note:
             raise ValueError(f"Note {note_id} not found")
         
-        # Generate filename
-        timestamp = note['timestamp'][:19] if note['timestamp'] else datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        safe_title = sanitize_filename(note['title'] or 'untitled')
-        filename = f"{timestamp}_{safe_title}.md"
-        filepath = self.vault_path / filename
+        # Determine target file: prefer existing file for this note id to avoid duplicates
+        existing_rel = self._find_note_file(note_id)
+        if existing_rel:
+            filepath = self.vault_path / existing_rel
+        else:
+            timestamp = (note['timestamp'] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")).replace(":", "-").replace(" ", "_")
+            safe_title = sanitize_filename(note['title'] or 'untitled')
+            filename = f"{timestamp}_{safe_title}_id{note_id}.md"
+            filepath = self.vault_path / filename
         
         # Prepare frontmatter
         frontmatter_data = {
@@ -79,34 +83,81 @@ class ObsidianSync:
             'summary': note['summary'],
             'status': note['status']
         }
+        # Optional metadata fields if present in schema
+        for opt_key in [
+            'file_filename','file_type','file_mime_type','file_size','extracted_text',
+            'file_metadata','source_url','web_metadata','screenshot_path'
+        ]:
+            try:
+                if opt_key in note.keys() and note[opt_key] is not None and note[opt_key] != '':
+                    # Parse JSON for metadata fields if possible
+                    if opt_key in {'file_metadata','web_metadata'} and isinstance(note[opt_key], (str, bytes)):
+                        try:
+                            frontmatter_data[opt_key] = json.loads(note[opt_key])
+                        except Exception:
+                            frontmatter_data[opt_key] = note[opt_key]
+                    else:
+                        frontmatter_data[opt_key] = note[opt_key]
+            except Exception:
+                pass
         
         if note['actions']:
             frontmatter_data['actions'] = note['actions'].split('\n')
         
-        # Handle audio files
-        audio_link = ""
-        if note['audio_filename']:
-            audio_src = settings.audio_dir / note['audio_filename']
-            audio_dest = self.audio_dir / note['audio_filename']
-            
-            if audio_src.exists():
-                shutil.copy2(audio_src, audio_dest)
-                audio_link = f"\n\n![[audio/{note['audio_filename']}]]\n"
+        # Handle media/attachments copies and embed links
+        media_links: List[str] = []
+        # Audio (original and converted wav if present)
+        try:
+            if 'audio_filename' in note.keys() and note['audio_filename']:
+                orig = settings.audio_dir / note['audio_filename']
+                if orig.exists():
+                    shutil.copy2(orig, self.audio_dir / orig.name)
+                    media_links.append(f"![[audio/{orig.name}]]")
+                conv = orig.with_suffix('.converted.wav')
+                if conv.exists():
+                    shutil.copy2(conv, self.audio_dir / conv.name)
+                    media_links.append(f"![[audio/{conv.name}]]")
+        except Exception:
+            pass
+        # Other attachments (images, PDFs)
+        try:
+            if 'file_filename' in note.keys() and note['file_filename']:
+                fsrc = (settings.uploads_dir / note['file_filename']) if hasattr(settings, 'uploads_dir') else None
+                if fsrc and fsrc.exists():
+                    shutil.copy2(fsrc, self.attachments_dir / fsrc.name)
+                    media_links.append(f"![[attachments/{fsrc.name}]]")
+        except Exception:
+            pass
         
         # Create content
         content = note['content'] or ""
-        if note['summary'] and note['summary'] != content:
-            content = f"## Summary\n{note['summary']}\n\n## Full Content\n{content}"
+        # Add source URL if available
+        try:
+            if 'source_url' in note.keys() and note['source_url']:
+                content = f"Source: {note['source_url']}\n\n" + content
+        except Exception:
+            pass
+        # Include summary and extracted text sections when present
+        if note['summary'] and (not content or note['summary'] != content):
+            content = f"## Summary\n{note['summary']}\n\n## Full Content\n{content}".strip()
+        try:
+            if 'extracted_text' in note.keys() and note['extracted_text']:
+                content = content + ("\n\n## Extracted Text\n" + str(note['extracted_text']))
+        except Exception:
+            pass
         
         # Add action items
         if note['actions']:
-            actions = note['actions'].split('\n')
-            content += f"\n\n## Action Items\n"
-            for action in actions:
-                content += f"- [ ] {action}\n"
+            actions = [a.strip() for a in str(note['actions']).split('\n') if a.strip()]
+            if actions:
+                content += f"\n\n## Action Items\n"
+                for action in actions:
+                    content += f"- [ ] {action}\n"
         
         # Create markdown with frontmatter and write
-        dump_frontmatter_file(filepath, content + audio_link, frontmatter_data)
+        # Append media links at end
+        media_block = ("\n\n" + "\n".join(media_links) + "\n") if media_links else ""
+        dump_frontmatter_file(filepath, content + media_block, frontmatter_data)
         
         conn.close()
         return filepath

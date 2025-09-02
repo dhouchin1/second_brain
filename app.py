@@ -1,4 +1,6 @@
 # Legacy search_engine removed from app imports; unified service is used instead
+from schemas.discord import DiscordWebhook
+from services.auth_service import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from discord_bot import SecondBrainCog
 from obsidian_sync import ObsidianSync
 from file_processor import FileProcessor
@@ -21,7 +23,7 @@ from fastapi import (
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from collections import defaultdict
 import pathlib
 import json
@@ -32,6 +34,11 @@ import uuid
 import os
 from llm_utils import ollama_summarize, ollama_generate_title
 from tasks import process_note
+from services.audio_queue import audio_queue
+from services.auth_service import AuthService, Token, TokenData, User, UserInDB, oauth2_scheme, auth_scheme, verify_webhook_token, router as auth_router, init_auth_router
+from services.webhook_service import WebhookService
+from services.upload_service import UploadService
+from services.analytics_service import AnalyticsService
 
 try:
     from tasks_enhanced import process_note_with_status
@@ -55,6 +62,12 @@ templates = Jinja2Templates(directory=str(settings.base_dir / "templates"))
 app.mount("/static", StaticFiles(directory=str(settings.base_dir / "static")), name="static")
 
 # Search API router will be included after auth functions are defined
+try:
+    if REALTIME_AVAILABLE:
+        create_status_endpoint(app)
+except Exception:
+    # Non-fatal if realtime endpoints cannot be registered
+    pass
 
 @app.on_event("startup")
 def _ensure_base_directories():
@@ -88,23 +101,18 @@ templates.env.filters['highlight'] = highlight
 def get_conn():
     return sqlite3.connect(str(settings.db_path))
 
-# --- Search helpers (unified service) ---
-def _get_search_service():
-    from services.search_adapter import SearchService
-    db_path = os.getenv('SQLITE_DB', str(settings.db_path))
-    return SearchService(db_path=db_path, vec_ext_path=os.getenv('SQLITE_VEC_PATH'))
+# --- Service instances ---
+auth_service = AuthService(get_conn)
+webhook_service = WebhookService(get_conn, auth_service)
+upload_service = UploadService(get_conn, auth_service, audio_queue)
+analytics_service = AnalyticsService(get_conn)
 
-def _resolve_search_mode(filters: Optional[dict]) -> str:
-    mode = 'hybrid'
-    if filters and isinstance(filters, dict):
-        t = filters.get('type') or filters.get('mode')
-        if t in {'fts','keyword'}:
-            mode = 'keyword'
-        elif t in {'semantic','vector'}:
-            mode = 'semantic'
-        elif t in {'hybrid','both'}:
-            mode = 'hybrid'
-    return mode
+# Access auth constants from service
+#ACCESS_TOKEN_EXPIRE_MINUTES = auth_service.ACCESS_TOKEN_EXPIRE_MINUTES
+#SECRET_KEY = auth_service.SECRET_KEY
+#ALGORITHM = auth_service.ALGORITHM
+
+# --- Search helpers moved to services/search_router.py ---
 
 # --- Flash + CSRF helpers ---
 def render_page(request: Request, template_name: str, context: dict):
@@ -187,143 +195,59 @@ def export_notes_to_obsidian(user_id: int):
     set_last_sync(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     conn.close()
 
-# Auth setup
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-SECRET_KEY = "super-secret-key"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# Auth setup moved to services/auth_service.py
 
-# --- Signed URL support for file serving ---
-def create_file_token(user_id: int, filename: str, ttl_seconds: int = 600) -> str:
-    """Create a short-lived JWT token for accessing a specific file.
-
-    Encodes: user id, filename, and expiry. Used for img/pdf links where
-    cookies may not be reliably attached (e.g., cross-origin contexts).
-    """
-    expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
-    payload = {"uid": user_id, "fn": filename, "exp": expire}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: str | None = None
-
-class User(BaseModel):
-    id: int
-    username: str
-
-class UserInDB(User):
-    hashed_password: str
+# Auth models and functions moved to services/auth_service.py
 
 # Enhanced data models
-class DiscordWebhook(BaseModel):
-    note: str
-    tags: str = ""
-    type: str = "discord"
-    discord_user_id: Optional[int] = None
-    timestamp: Optional[str] = None
+# Webhook models moved to services/webhook_service.py
 
-# Duplicate removed; SearchRequest is defined earlier
+# Service-based search endpoint using unified adapter
 
-# (moved below auth functions) Service-based search endpoint using unified adapter
+# All auth functions moved to services/auth_service.py
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+# Convenient function aliases that delegate to auth service
+def validate_csrf(request: Request, csrf_token: Optional[str]) -> bool:
+    return auth_service.validate_csrf(request, csrf_token)
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def get_user(username: str):
-    conn = get_conn()
-    c = conn.cursor()
-    row = c.execute(
-        "SELECT id, username, hashed_password FROM users WHERE username = ?",
-        (username,),
-    ).fetchone()
-    conn.close()
-    if row:
-        return UserInDB(id=row[0], username=row[1], hashed_password=row[2])
-    return None
-
-def authenticate_user(username: str, password: str):
-    user = get_user(username)
-    if not user or not verify_password(password, user.hashed_password):
-        return False
-    return user
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-def get_current_user_from_discord(authorization: str = Header(None)) -> User:
-    """Authenticate Discord webhook requests using a shared bearer token.
-
-    The Discord bot sends `Authorization: Bearer <WEBHOOK_TOKEN>`. We validate
-    the token and return a placeholder user, since the endpoint determines the
-    actual `user_id` by mapping the provided `discord_user_id` in the payload.
-    """
-    expected = os.getenv("WEBHOOK_TOKEN", "your-secret-token")
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
-    token = authorization.split(" ", 1)[1].strip()
-    if token != expected:
-        raise HTTPException(status_code=401, detail="Invalid webhook token")
-    return User(id=0, username="discord-webhook")
-
-async def get_current_user(request: Request, token: Optional[str] = Depends(lambda: None)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    # Support Authorization header or cookie-based token for browser navigation
-    if not token:
-        auth = request.headers.get("Authorization")
-        if auth and auth.lower().startswith("bearer "):
-            token = auth.split(" ", 1)[1].strip()
-        else:
-            token = request.cookies.get("access_token")
-    if not token:
-        raise credentials_exception
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    user = get_user(token_data.username)
-    if user is None:
-        raise credentials_exception
-    return user
+def create_file_token(user_id: int, filename: str, ttl_seconds: int = 600) -> str:
+    return auth_service.create_file_token(user_id, filename, ttl_seconds)
 
 def get_current_user_silent(request: Request) -> Optional[User]:
-    """Best-effort user extraction for browser pages. Returns None if invalid."""
-    token = None
-    auth = request.headers.get("Authorization")
-    if auth and auth.lower().startswith("bearer "):
-        token = auth.split(" ", 1)[1].strip()
-    else:
-        token = request.cookies.get("access_token")
-    if not token:
-        return None
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if not username:
-            return None
-        user = get_user(username)
-        return user
-    except Exception:
-        return None
+    return auth_service.get_current_user_silent(request)
+
+async def get_current_user(request: Request, token: Optional[str] = None):
+    return await auth_service.get_current_user(request, token)
+
+def authenticate_user(username: str, password: str):
+    return auth_service.authenticate_user(username, password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    return auth_service.create_access_token(data, expires_delta)
+
+def get_password_hash(password: str) -> str:
+    return auth_service.get_password_hash(password)
+
+def get_user_by_email(email: str) -> Optional[UserInDB]:
+    return auth_service.get_user_by_email(email)
+
+def create_magic_link_token() -> str:
+    return auth_service.create_magic_link_token()
+
+def store_magic_link_token(email: str, token: str, expires_minutes: int = 15) -> bool:
+    return auth_service.store_magic_link_token(email, token, expires_minutes)
+
+def validate_magic_link_token(token: str) -> Optional[str]:
+    return auth_service.validate_magic_link_token(token)
+
+def send_magic_link_email(email: str, token: str, request_url: str) -> bool:
+    return auth_service.send_magic_link_email(email, token, request_url)
+
+def cleanup_expired_magic_links():
+    return auth_service.cleanup_expired_magic_links()
+
+def get_current_user_from_discord_header(authorization: str = Header(None)) -> User:
+    return auth_service.get_current_user_from_discord(authorization)
 
 def init_db():
     conn = get_conn()
@@ -485,6 +409,15 @@ def init_db():
 
 init_db()
 
+# --- Include Search Router ---
+from services.search_router import router as search_router, init_search_router
+init_search_router(get_conn, get_current_user)  # Initialize with functions
+app.include_router(search_router)
+
+# --- Include Auth Router ---
+init_auth_router(get_conn, render_page, set_flash, auth_service)
+app.include_router(auth_router)
+
 # --- Simple FIFO job worker for note processing ---
 import asyncio
 
@@ -583,6 +516,24 @@ async def _start_automation():
 if REALTIME_AVAILABLE:
     create_status_endpoint(app)
 
+async def process_audio_queue():
+    """Background task to process audio queue in FIFO order"""
+    next_item = audio_queue.get_next_for_processing()
+    if next_item:
+        note_id, user_id = next_item
+        try:
+            if REALTIME_AVAILABLE:
+                from tasks_enhanced import process_note_with_status
+                await process_note_with_status(note_id)
+            else:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, process_note, note_id)
+        except Exception as e:
+            print(f"Error processing audio note {note_id}: {e}")
+            # Mark as failed in queue
+            audio_queue.mark_completed(note_id, success=False)
+
 def find_related_notes(note_id, tags, user_id, conn):
     tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
     if not tag_list:
@@ -594,13 +545,7 @@ def find_related_notes(note_id, tags, user_id, conn):
     rows = conn.execute(sql, params).fetchall()
     return [{"id": row[0], "title": row[1]} for row in rows]
 
-# Include search API router
-try:
-    from search_api import create_search_router
-    search_router = create_search_router(get_current_user, str(settings.db_path))
-    app.include_router(search_router)
-except ImportError:
-    pass  # Graceful degradation if search API not available
+# Search router removed - functionality integrated into main app
 
 # Search page route (redirects to login if unauthenticated)
 @app.get("/search")
@@ -610,103 +555,386 @@ async def search_page(request: Request):
         return RedirectResponse("/login", status_code=302)
     return render_page(request, "search.html", {"user": user})
 
-# Auth endpoints
-@app.post("/register", response_model=User)
-def register(username: str = Form(...), password: str = Form(...)):
-    conn = get_conn()
-    c = conn.cursor()
-    hashed = get_password_hash(password)
-    try:
-        c.execute(
-            "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
-            (username, hashed),
-        )
-        conn.commit()
-        user_id = c.lastrowid
-    except sqlite3.IntegrityError:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Username already registered")
-    conn.close()
-    return User(id=user_id, username=username)
+# Auth endpoints moved to services/auth_service.py
 
-@app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Incorrect username or password",
-        )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
 
-# Simple browser login/logout using cookie for token storage
-@app.get("/login")
-def login_page(request: Request):
-    return render_page(request, "login.html", {})
+# All auth endpoints moved to services/auth_service.py
 
-@app.post("/login")
-def login_submit(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...)):
-    if not validate_csrf(request, csrf_token):
-        return render_page(request, "login.html", {"error": "Invalid form. Please refresh."})
-    user = authenticate_user(username, password)
-    if not user:
-        resp = render_page(request, "login.html", {"error": "Invalid username or password"})
-        resp.status_code = 400
-        return resp
-    token = create_access_token({"sub": user.username}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    resp = RedirectResponse(url="/", status_code=302)
-    resp.set_cookie("access_token", token, httponly=True, max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60)
-    set_flash(resp, "Welcome back!", "success")
-    return resp
+@app.get("/saas")
+def saas_landing_page(request: Request):
+    """Modern SaaS landing page for marketing and showcase"""
+    return render_page(request, "landing_saas.html", {})
 
-@app.post("/logout")
-def logout(request: Request, csrf_token: str = Form(...)):
-    if not validate_csrf(request, csrf_token):
-        return RedirectResponse(url="/login", status_code=302)
-    resp = RedirectResponse(url="/login", status_code=302)
-    resp.delete_cookie("access_token")
-    set_flash(resp, "Logged out.")
-    return resp
 
-# Web Registration (UI)
-@app.get("/signup")
-def signup_page(request: Request):
-    return render_page(request, "register.html", {})
+@app.get("/landing-saas")
+def saas_landing_page_alt(request: Request):
+    """Alternative URL for the modern SaaS landing page"""
+    return render_page(request, "landing_saas.html", {})
 
-@app.post("/signup")
-def signup_submit(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...)):
-    if not validate_csrf(request, csrf_token):
-        return render_page(request, "register.html", {"error": "Invalid form. Please refresh."})
-    # Reuse registration logic, then log in
-    conn = get_conn()
-    c = conn.cursor()
-    hashed = get_password_hash(password)
-    try:
-        c.execute(
-            "INSERT INTO users (username, hashed_password) VALUES (?, ?)",
-            (username, hashed),
-        )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        resp = render_page(request, "register.html", {"error": "Username already registered"})
-        resp.status_code = 400
-        return resp
-    conn.close()
-    token = create_access_token({"sub": username}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    resp = RedirectResponse(url="/", status_code=302)
-    resp.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60)
-    set_flash(resp, "Account created!", "success")
-    return resp
+# Enhanced health monitoring and diagnostics
+import psutil
+import shutil
+import subprocess
+import requests
+import time
+import logging
+from pathlib import Path
 
-# Simple health check
+# Initialize logger for health monitoring
+logger = logging.getLogger(__name__)
+
 @app.get("/health")
 def health():
-    return {"ok": True, "time": datetime.utcnow().isoformat()}
+    """Comprehensive system health check with detailed diagnostics"""
+    health_data = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {},
+        "database": {},
+        "resources": {},
+        "issues": []
+    }
+    
+    try:
+        # Database health check
+        db_health = _check_database_health()
+        health_data["database"] = db_health
+        if not db_health.get("healthy", False):
+            health_data["status"] = "degraded"
+            health_data["issues"].extend(db_health.get("issues", []))
+        
+        # Service availability checks
+        services_health = _check_services_health()
+        health_data["services"] = services_health
+        for service_name, service_data in services_health.items():
+            if not service_data.get("healthy", False):
+                health_data["status"] = "degraded"
+                health_data["issues"].append(f"{service_name}: {service_data.get('error', 'Unknown issue')}")
+        
+        # Resource monitoring
+        resources_health = _check_resources_health()
+        health_data["resources"] = resources_health
+        if resources_health.get("disk_space_critical", False) or resources_health.get("memory_critical", False):
+            health_data["status"] = "critical"
+            health_data["issues"].extend(resources_health.get("warnings", []))
+        
+        # Processing queue health
+        queue_health = _check_queue_health()
+        health_data["processing_queue"] = queue_health
+        if queue_health.get("stalled_tasks", 0) > 5:
+            health_data["status"] = "degraded"
+            health_data["issues"].append(f"Queue has {queue_health['stalled_tasks']} stalled tasks")
+            
+    except Exception as e:
+        health_data["status"] = "error"
+        health_data["issues"].append(f"Health check failed: {str(e)}")
+        logger.error(f"Health check error: {e}", exc_info=True)
+    
+    # Set appropriate HTTP status code
+    status_code = 200
+    if health_data["status"] == "degraded":
+        status_code = 200  # Still operational
+    elif health_data["status"] in ["critical", "error"]:
+        status_code = 503  # Service unavailable
+    
+    return JSONResponse(content=health_data, status_code=status_code)
+
+def _check_database_health():
+    """Check SQLite database connectivity and integrity"""
+    health_info = {
+        "healthy": False,
+        "connection_test": False,
+        "tables_present": False,
+        "fts_index_status": "unknown",
+        "integrity_check": "unknown",
+        "statistics": {},
+        "issues": []
+    }
+    
+    try:
+        # Basic connection test
+        conn = get_conn()
+        c = conn.cursor()
+        health_info["connection_test"] = True
+        
+        # Check required tables exist
+        tables = c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        table_names = [t[0] for t in tables]
+        required_tables = ["users", "notes", "audio_processing_queue"]
+        missing_tables = [t for t in required_tables if t not in table_names]
+        
+        if missing_tables:
+            health_info["issues"].append(f"Missing tables: {', '.join(missing_tables)}")
+        else:
+            health_info["tables_present"] = True
+        
+        # Database statistics
+        stats = {}
+        for table in ["users", "notes", "reminders", "search_analytics"]:
+            if table in table_names:
+                count = c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                stats[f"{table}_count"] = count
+        
+        # Check FTS5 index if notes table exists
+        if "notes" in table_names:
+            try:
+                fts_tables = c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'notes_fts%'").fetchall()
+                if fts_tables:
+                    health_info["fts_index_status"] = "present"
+                    # Test FTS search functionality
+                    c.execute("SELECT COUNT(*) FROM notes_fts WHERE notes_fts MATCH 'test' LIMIT 1")
+                    health_info["fts_index_status"] = "functional"
+                else:
+                    health_info["fts_index_status"] = "missing"
+                    health_info["issues"].append("FTS5 index not found")
+            except Exception as e:
+                health_info["fts_index_status"] = "error"
+                health_info["issues"].append(f"FTS5 index error: {str(e)}")
+        
+        # Database integrity check (quick version)
+        try:
+            integrity_result = c.execute("PRAGMA quick_check").fetchone()[0]
+            health_info["integrity_check"] = integrity_result
+            if integrity_result != "ok":
+                health_info["issues"].append(f"Database integrity issue: {integrity_result}")
+        except Exception as e:
+            health_info["integrity_check"] = "error"
+            health_info["issues"].append(f"Integrity check failed: {str(e)}")
+        
+        health_info["statistics"] = stats
+        health_info["healthy"] = len(health_info["issues"]) == 0
+        
+        conn.close()
+        
+    except Exception as e:
+        health_info["issues"].append(f"Database connection failed: {str(e)}")
+        
+    return health_info
+
+def _check_services_health():
+    """Check external service availability"""
+    services = {}
+    
+    # Ollama service check
+    ollama_health = {"healthy": False, "response_time_ms": None, "error": None}
+    try:
+        start_time = time.time()
+        response = requests.get(
+            settings.ollama_api_url.replace("/api/generate", "/api/tags"),
+            timeout=5
+        )
+        response_time = (time.time() - start_time) * 1000
+        ollama_health["response_time_ms"] = round(response_time, 2)
+        
+        if response.status_code == 200:
+            ollama_health["healthy"] = True
+            data = response.json()
+            ollama_health["models"] = [m.get("name", "unknown") for m in data.get("models", [])]
+        else:
+            ollama_health["error"] = f"HTTP {response.status_code}"
+    except Exception as e:
+        ollama_health["error"] = str(e)
+    
+    services["ollama"] = ollama_health
+    
+    # Whisper.cpp availability check
+    whisper_health = {"healthy": False, "path_exists": False, "executable": False, "error": None}
+    try:
+        whisper_path = settings.whisper_cpp_path
+        whisper_health["path_exists"] = whisper_path.exists()
+        whisper_health["executable"] = whisper_path.exists() and whisper_path.is_file()
+        
+        if whisper_health["executable"]:
+            # Quick test run (this might not work on all systems, so we'll catch errors)
+            try:
+                result = subprocess.run(
+                    [str(whisper_path), "--help"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3
+                )
+                whisper_health["healthy"] = result.returncode == 0 or "whisper" in result.stderr.lower()
+            except subprocess.TimeoutExpired:
+                whisper_health["healthy"] = True  # If it hangs on --help, it's probably working
+            except Exception as e:
+                whisper_health["error"] = f"Test run failed: {str(e)}"
+        else:
+            whisper_health["error"] = "Binary not found or not executable"
+    except Exception as e:
+        whisper_health["error"] = str(e)
+    
+    services["whisper"] = whisper_health
+    
+    # Email service check (if enabled)
+    if settings.email_enabled:
+        email_health = {"healthy": False, "configured": False, "error": None}
+        try:
+            email_health["configured"] = bool(settings.email_api_key)
+            email_health["service_type"] = settings.email_service
+            
+            if email_health["configured"]:
+                # Basic configuration check without sending actual email
+                email_health["healthy"] = True
+            else:
+                email_health["error"] = "No API key configured"
+        except Exception as e:
+            email_health["error"] = str(e)
+        
+        services["email"] = email_health
+    
+    return services
+
+def _check_resources_health():
+    """Check system resource usage"""
+    resources = {
+        "disk_space": {},
+        "memory": {},
+        "disk_space_critical": False,
+        "memory_critical": False,
+        "warnings": []
+    }
+    
+    try:
+        # Disk space check
+        base_dir = settings.base_dir
+        disk_usage = shutil.disk_usage(base_dir)
+        total_gb = disk_usage.total / (1024**3)
+        free_gb = disk_usage.free / (1024**3)
+        used_percent = ((disk_usage.total - disk_usage.free) / disk_usage.total) * 100
+        
+        resources["disk_space"] = {
+            "total_gb": round(total_gb, 2),
+            "free_gb": round(free_gb, 2),
+            "used_percent": round(used_percent, 1)
+        }
+        
+        if used_percent > 95:
+            resources["disk_space_critical"] = True
+            resources["warnings"].append(f"Critical disk space: {used_percent:.1f}% used")
+        elif used_percent > 85:
+            resources["warnings"].append(f"Low disk space: {used_percent:.1f}% used")
+        
+        # Memory usage
+        memory = psutil.virtual_memory()
+        resources["memory"] = {
+            "total_gb": round(memory.total / (1024**3), 2),
+            "available_gb": round(memory.available / (1024**3), 2),
+            "used_percent": memory.percent
+        }
+        
+        if memory.percent > 95:
+            resources["memory_critical"] = True
+            resources["warnings"].append(f"Critical memory usage: {memory.percent:.1f}%")
+        elif memory.percent > 85:
+            resources["warnings"].append(f"High memory usage: {memory.percent:.1f}%")
+        
+        # File system health for key directories
+        key_dirs = {
+            "vault": settings.vault_path,
+            "audio": settings.audio_dir,
+            "uploads": settings.uploads_dir
+        }
+        
+        dir_info = {}
+        for name, path in key_dirs.items():
+            if path.exists():
+                dir_info[name] = {
+                    "exists": True,
+                    "writable": os.access(path, os.W_OK),
+                    "files_count": len(list(path.iterdir())) if path.is_dir() else 0
+                }
+            else:
+                dir_info[name] = {"exists": False, "writable": False}
+                resources["warnings"].append(f"Directory missing: {name} ({path})")
+        
+        resources["directories"] = dir_info
+        
+    except Exception as e:
+        resources["warnings"].append(f"Resource check error: {str(e)}")
+    
+    return resources
+
+def _check_queue_health():
+    """Check processing queue health and performance"""
+    queue_info = {
+        "healthy": True,
+        "queued_tasks": 0,
+        "processing_tasks": 0,
+        "stalled_tasks": 0,
+        "completed_today": 0,
+        "average_processing_time_minutes": None,
+        "issues": []
+    }
+    
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Check audio processing queue
+        from services.audio_queue import audio_queue
+        
+        # Get current queue status
+        queue_status = audio_queue.get_batch_status()
+        queue_info.update({
+            "queued_tasks": queue_status.get("queued", 0),
+            "processing_tasks": queue_status.get("processing", 0),
+            "batch_mode": queue_status.get("batch_mode", False)
+        })
+        
+        # Check for stalled tasks (processing for more than 2 hours)
+        stalled_threshold = datetime.utcnow() - timedelta(hours=2)
+        stalled_count = c.execute("""
+            SELECT COUNT(*) FROM audio_processing_queue 
+            WHERE status = 'processing' AND started_at < ?
+        """, (stalled_threshold.isoformat(),)).fetchone()[0]
+        
+        queue_info["stalled_tasks"] = stalled_count
+        
+        # Tasks completed today
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        completed_today = c.execute("""
+            SELECT COUNT(*) FROM audio_processing_queue 
+            WHERE status = 'completed' AND completed_at >= ?
+        """, (today_start.isoformat(),)).fetchone()[0]
+        
+        queue_info["completed_today"] = completed_today
+        
+        # Average processing time for completed tasks (last 100)
+        avg_time_query = c.execute("""
+            SELECT AVG(
+                (julianday(completed_at) - julianday(started_at)) * 1440
+            ) as avg_minutes
+            FROM audio_processing_queue 
+            WHERE status = 'completed' AND started_at IS NOT NULL 
+            ORDER BY completed_at DESC LIMIT 100
+        """).fetchone()
+        
+        if avg_time_query and avg_time_query[0]:
+            queue_info["average_processing_time_minutes"] = round(avg_time_query[0], 2)
+        
+        # Check notes table for processing status
+        notes_status = c.execute("""
+            SELECT status, COUNT(*) 
+            FROM notes 
+            WHERE type = 'audio' 
+            GROUP BY status
+        """).fetchall()
+        
+        status_counts = dict(notes_status)
+        queue_info["notes_by_status"] = status_counts
+        
+        # Check for failed tasks
+        failed_count = status_counts.get("failed", 0) + status_counts.get("failed:timeout", 0)
+        if failed_count > 0:
+            queue_info["issues"].append(f"{failed_count} failed audio processing tasks")
+        
+        conn.close()
+        
+    except Exception as e:
+        queue_info["healthy"] = False
+        queue_info["issues"].append(f"Queue check error: {str(e)}")
+    
+    return queue_info
 
 # Main endpoints (keep existing)
 @app.get("/")
@@ -911,24 +1139,7 @@ def _get_incoming_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-def _get_manifest_path(upload_id: str) -> Path:
-    return _get_incoming_dir() / f"{upload_id}.json"
-
-def _get_part_path(upload_id: str) -> Path:
-    return _get_incoming_dir() / f"{upload_id}.part"
-
-def _load_manifest(upload_id: str) -> dict | None:
-    p = _get_manifest_path(upload_id)
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text())
-    except Exception:
-        return None
-
-def _save_manifest(upload_id: str, data: dict) -> None:
-    p = _get_manifest_path(upload_id)
-    p.write_text(json.dumps(data))
+# Upload helper functions moved to services/upload_service.py
 
 @app.post("/upload/init")
 async def upload_init(
@@ -936,55 +1147,16 @@ async def upload_init(
     data: dict = Body(...),
     current_user: User = Depends(get_current_user),
 ):
-    """Initialize a resumable upload.
-
-    Expects JSON: { filename: str, total_size?: int, mime_type?: str }
-    Returns: { upload_id, offset }
-    Requires CSRF via X-CSRF-Token header matching cookie.
-    """
-    csrf_header = request.headers.get("X-CSRF-Token")
-    if not validate_csrf(request, csrf_header):
-        raise HTTPException(status_code=400, detail="Invalid CSRF token")
-
-    filename = (data or {}).get("filename")
-    total_size = (data or {}).get("total_size")
-    mime_type = (data or {}).get("mime_type")
-    if not filename:
-        raise HTTPException(status_code=400, detail="filename required")
-
-    upload_id = uuid.uuid4().hex
-    manifest = {
-        "upload_id": upload_id,
-        "filename": filename,
-        "total_size": int(total_size) if total_size is not None else None,
-        "mime_type": mime_type,
-        "created_by": current_user.id,
-        "created_at": datetime.utcnow().isoformat(),
-        "status": "active",
-    }
-    _save_manifest(upload_id, manifest)
-    # Ensure empty part file
-    _get_part_path(upload_id).write_bytes(b"")
-    return {"upload_id": upload_id, "offset": 0}
+    """Initialize a resumable upload."""
+    return await upload_service.init_upload(request, data, current_user)
 
 @app.get("/upload/status")
 async def upload_status(
-    request: Request,
     upload_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    manifest = _load_manifest(upload_id)
-    if not manifest or manifest.get("created_by") != current_user.id:
-        raise HTTPException(status_code=404, detail="Upload not found")
-    part_path = _get_part_path(upload_id)
-    size = part_path.stat().st_size if part_path.exists() else 0
-    return {
-        "upload_id": upload_id,
-        "offset": size,
-        "status": manifest.get("status", "active"),
-        "filename": manifest.get("filename"),
-        "total_size": manifest.get("total_size"),
-    }
+    """Get upload status."""
+    return await upload_service.get_upload_status(upload_id, current_user)
 
 @app.put("/upload/chunk")
 async def upload_chunk(
@@ -993,46 +1165,8 @@ async def upload_chunk(
     offset: int = Query(...),
     current_user: User = Depends(get_current_user),
 ):
-    """Append a chunk to an active upload.
-
-    Query params: upload_id, offset (expected start position)
-    Body: raw bytes (Content-Length required)
-    CSRF: X-CSRF-Token header required
-    """
-    csrf_header = request.headers.get("X-CSRF-Token")
-    if not validate_csrf(request, csrf_header):
-        raise HTTPException(status_code=400, detail="Invalid CSRF token")
-
-    manifest = _load_manifest(upload_id)
-    if not manifest or manifest.get("created_by") != current_user.id:
-        raise HTTPException(status_code=404, detail="Upload not found")
-    if manifest.get("status") != "active":
-        raise HTTPException(status_code=400, detail="Upload not active")
-
-    part_path = _get_part_path(upload_id)
-    part_path.parent.mkdir(parents=True, exist_ok=True)
-    current_size = part_path.stat().st_size if part_path.exists() else 0
-    if current_size != int(offset):
-        # Client should resume from server-reported offset
-        return JSONResponse({"expected_offset": current_size}, status_code=409)
-
-    # Read raw body in chunks and append
-    max_size = settings.max_file_size
-    total_after = current_size
-    try:
-        with open(part_path, "ab") as out:
-            async for chunk in request.stream():
-                if not chunk:
-                    continue
-                total_after += len(chunk)
-                if total_after > max_size:
-                    raise HTTPException(status_code=400, detail=f"File too large (>{max_size} bytes)")
-                out.write(chunk)
-        return {"upload_id": upload_id, "offset": total_after}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chunk append failed: {e}")
+    """Append a chunk to an active upload."""
+    return await upload_service.upload_chunk(request, upload_id, offset, current_user)
 
 @app.post("/upload/finalize")
 async def upload_finalize(
@@ -1043,111 +1177,8 @@ async def upload_finalize(
     tags: str = Body(""),
     current_user: User = Depends(get_current_user),
 ):
-    """Finalize an upload and create a note, mirroring /capture for files."""
-    csrf_header = request.headers.get("X-CSRF-Token")
-    if not validate_csrf(request, csrf_header):
-        raise HTTPException(status_code=400, detail="Invalid CSRF token")
-
-    manifest = _load_manifest(upload_id)
-    if not manifest or manifest.get("created_by") != current_user.id:
-        raise HTTPException(status_code=404, detail="Upload not found")
-    if manifest.get("status") != "active":
-        raise HTTPException(status_code=400, detail="Upload not active")
-
-    part_path = _get_part_path(upload_id)
-    if not part_path.exists():
-        raise HTTPException(status_code=400, detail="No data uploaded")
-
-    # Process the saved file
-    processor = FileProcessor()
-    result = processor.process_saved_file(part_path, manifest.get("filename") or "uploaded.bin")
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=f"File processing failed: {result.get('error')}")
-
-    manifest["status"] = "finalized"
-    _save_manifest(upload_id, manifest)
-
-    file_info = result['file_info']
-    note_type = file_info['category']
-    stored_filename = result['stored_filename']
-    extracted_text = result.get('extracted_text', "")
-    file_metadata = {
-        'original_filename': file_info['original_filename'],
-        'mime_type': file_info['mime_type'],
-        'size_bytes': file_info['size_bytes'],
-        'processing_type': result['processing_type'],
-        'metadata': result.get('metadata'),
-    }
-    processing_status = "pending" if note_type == 'audio' else "complete"
-    content = (note or "").strip()
-    if processing_status == "complete" and not content and extracted_text:
-        content = extracted_text[:1000]
-
-    title = content[:60] if content else (f"File: {file_info['original_filename']}" if file_info['original_filename'] else "New Note")
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Save to database
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute(
-            """
-            INSERT INTO notes (
-                title, content, summary, tags, actions, type, timestamp,
-                audio_filename, file_filename, file_type, file_mime_type,
-                file_size, extracted_text, file_metadata, status, user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                title,
-                content,
-                "",
-                tags,
-                "",
-                note_type,
-                now,
-                stored_filename if note_type == 'audio' else None,
-                stored_filename,
-                note_type,
-                file_metadata.get('mime_type'),
-                file_metadata.get('size_bytes'),
-                extracted_text,
-                json.dumps(file_metadata, default=str) if file_metadata else None,
-                processing_status,
-                current_user.id,
-            ),
-        )
-        note_id = c.lastrowid
-        c.execute(
-            """
-            INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (note_id, title, "", tags, "", content, extracted_text),
-        )
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-    finally:
-        conn.close()
-
-    # Queue background processing for audio
-    try:
-        if processing_status == "pending":
-            from tasks_enhanced import process_note_with_status
-            background_tasks.add_task(process_note_with_status, note_id)
-            return {
-                "success": True,
-                "id": note_id,
-                "status": processing_status,
-                "file_type": note_type,
-                "message": "Upload finalized and queued for processing",
-            }
-    except Exception:
-        pass
-
-    return {"success": True, "id": note_id, "status": processing_status, "file_type": note_type, "message": "Upload finalized"}
+    """Finalize an upload and create a note."""
+    return await upload_service.finalize_upload(request, background_tasks, upload_id, note, tags, current_user)
 
 @app.post("/api/notes/{note_id}/update")
 async def api_update_note(
@@ -1186,6 +1217,144 @@ async def api_sse_token(request: Request):
             "Access-Control-Allow-Credentials": "true",
         })
     return JSONResponse({"token": token}, headers=headers)
+
+
+@app.get("/api/audio-queue/status")
+async def get_audio_queue_status(current_user: User = Depends(get_current_user)):
+    """Get current audio processing queue status for the user"""
+    status = audio_queue.get_queue_status(current_user.id)
+    
+    # Also get recent processing activity
+    conn = get_conn()
+    c = conn.cursor()
+    
+    # Get user's audio notes with their current status
+    c.execute("""
+        SELECT n.id, n.title, n.status, n.timestamp, n.audio_filename,
+               CASE 
+                 WHEN n.status LIKE '%:%' THEN CAST(SUBSTR(n.status, INSTR(n.status, ':') + 1) AS INTEGER)
+                 ELSE 0
+               END as progress_percent
+        FROM notes n
+        WHERE n.user_id = ? AND n.type = 'audio' 
+        ORDER BY n.timestamp DESC
+        LIMIT 10
+    """, (current_user.id,))
+    
+    recent_audio = []
+    for row in c.fetchall():
+        recent_audio.append({
+            "id": row[0],
+            "title": row[1] or "Untitled Audio",
+            "status": row[2],
+            "timestamp": row[3],
+            "filename": row[4],
+            "progress_percent": row[5]
+        })
+    
+    conn.close()
+    
+    return {
+        "queue_status": status,
+        "recent_audio": recent_audio
+    }
+
+
+@app.get("/api/transcribe/status")
+async def transcribe_status(current_user: User = Depends(get_current_user)):
+    """Report basic transcription queue status and settings."""
+    conn = get_conn()
+    c = conn.cursor()
+    pending = c.execute(
+        "SELECT COUNT(*) FROM notes WHERE user_id=? AND status='pending' AND type='audio'",
+        (current_user.id,),
+    ).fetchone()[0]
+    in_prog = c.execute(
+        "SELECT COUNT(*) FROM notes WHERE user_id=? AND status LIKE 'transcribing:%' AND type='audio'",
+        (current_user.id,),
+    ).fetchone()[0]
+    last_done = c.execute(
+        "SELECT timestamp FROM notes WHERE user_id=? AND type='audio' AND status='complete' ORDER BY timestamp DESC LIMIT 1",
+        (current_user.id,),
+    ).fetchone()
+    conn.close()
+    return {
+        "pending": int(pending),
+        "in_progress": int(in_prog),
+        "last_completed": last_done[0] if last_done else None,
+        "settings": {
+            "transcription_concurrency": getattr(settings, 'transcription_concurrency', 1),
+            "transcription_segment_seconds": getattr(settings, 'transcription_segment_seconds', 600),
+        },
+    }
+
+
+@app.get("/api/batch/status")
+async def get_batch_status(current_user: User = Depends(get_current_user)):
+    """Get batch processing status and configuration"""
+    return audio_queue.get_batch_status()
+
+
+@app.post("/api/batch/process-now")
+async def process_batch_now(current_user: User = Depends(get_current_user)):
+    """Immediately process all queued items in batch mode"""
+    try:
+        # Import here to avoid circular imports
+        from tasks import process_batch
+        process_batch()
+        return {"message": "Batch processing initiated", "success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting batch processing: {str(e)}")
+
+
+@app.post("/api/transcribe/requeue")
+async def transcribe_requeue(
+    background_tasks: BackgroundTasks,
+    limit: int = Body(50, embed=True),
+    current_user: User = Depends(get_current_user),
+):
+    """Requeue pending/incomplete audio notes for transcription.
+
+    Schedules background jobs for notes with status 'pending' or 'transcribing:*'.
+    """
+    conn = get_conn()
+    c = conn.cursor()
+    rows = c.execute(
+        """
+        SELECT id FROM notes
+        WHERE user_id=? AND type='audio' AND (status='pending' OR status LIKE 'transcribing:%')
+        ORDER BY id DESC LIMIT ?
+        """,
+        (current_user.id, int(limit)),
+    ).fetchall()
+    conn.close()
+    count = 0
+    for (nid,) in rows:
+        try:
+            if REALTIME_AVAILABLE:
+                background_tasks.add_task(process_note_with_status, nid)
+            else:
+                background_tasks.add_task(process_note, nid)
+            count += 1
+        except Exception:
+            background_tasks.add_task(process_note, nid)
+            count += 1
+    return {"success": True, "requeued": count}
+
+
+@app.post("/webhook/audio")
+async def webhook_audio_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    tags: str = Form(""),
+    user_id: int = Form(2)  # Default user ID for webhook (adjust as needed)
+):
+    """
+    Fast audio webhook endpoint for Apple Shortcuts and external integrations.
+    Quickly saves audio and queues for background processing without blocking.
+    """
+    return await webhook_service.process_audio_webhook(background_tasks, file, tags, user_id)
+
 
     fields = {k: v for k, v in data.items() if k in {"title", "tags", "content"}}
     if not fields:
@@ -1232,290 +1401,67 @@ async def api_sse_token(request: Request):
 
     return {"success": True, "note": {"id": note_id, **fields}}
 
-# Enhanced Search Endpoint (now via SearchService)
-@app.post("/api/search/enhanced")
-async def enhanced_search(
-    request: "SearchRequest",
-    current_user: User = Depends(get_current_user)
-):
-    """Enhanced search delegating to the unified SearchService.
-
-    Applies optional filters client-side for tags/type to preserve previous behavior.
-    """
-    svc = _get_search_service()
-    f = request.filters or {}
-    mode = _resolve_search_mode(f)
-    rows = svc.search(request.query, mode=mode, k=request.limit or 20)
-    notes = [{k: row[k] for k in row.keys()} for row in rows]
-    # Apply simple filters client-side to match legacy endpoint
-    if 'tags' in f and f['tags']:
-        tag_q = str(f['tags']).strip()
-        notes = [n for n in notes if tag_q in (n.get('tags') or '')]
-    if 'type' in f and f['type'] not in {'fts','keyword','semantic','vector','hybrid','both'}:
-        notes = [n for n in notes if n.get('type') == f['type']]
-    return {
-        "results": notes,
-        "total": len(notes),
-        "query": request.query,
-        "mode": mode
-    }
+# Enhanced Search Endpoint - MOVED to services/search_router.py
 
 
 # New data models
-class DiscordWebhook(BaseModel):
-    note: str
-    tags: str = ""
-    type: str = "discord"
-    discord_user_id: int
-    timestamp: str
+# Removed duplicate DiscordWebhook class - using definition from line ~232
 
-class AppleReminderWebhook(BaseModel):
-    title: str
-    due_date: Optional[str] = None
-    notes: str = ""
-    tags: str = "reminder,apple"
+# Apple webhook models moved to services/webhook_service.py
 
-class CalendarEvent(BaseModel):
-    title: str
-    start_date: str
-    end_date: str
-    description: str = ""
-    attendees: List[str] = []
-
-class SearchRequest(BaseModel):
-    query: str
-    filters: Optional[dict] = {}
-    limit: int = 20
-
-# Service-based search endpoint using unified adapter
-@app.post("/api/search/service")
-async def search_service_endpoint(
-    request: "SearchRequest",
-    current_user: User = Depends(get_current_user)
-):
-    svc = _get_search_service()
-    rows = svc.search(request.query, mode='hybrid', k=request.limit or 20)
-    data = [{k: row[k] for k in row.keys()} for row in rows]
-    return {
-        "success": True,
-        "data": data,
-        "metadata": {"count": len(data), "mode": "hybrid"}
-    }
+# Removed SearchRequest class - moved to services/search_router.py
+# Removed redundant search endpoint - consolidated into /api/search
 
 # Discord Integration
 @app.post("/webhook/discord/legacy", include_in_schema=False)
 async def webhook_discord_legacy1(
-    data: DiscordWebhook,
+    data: dict,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user_from_discord)
+    current_user: User = Depends(get_current_user_from_discord_header)
 ):
     """Enhanced Discord webhook with user mapping"""
-    # Map Discord user to Second Brain user
-    conn = get_conn()
-    c = conn.cursor()
-    
-    # Check if Discord user is linked
-    discord_link = c.execute(
-        "SELECT user_id FROM discord_users WHERE discord_id = ?",
-        (data.discord_user_id,)
-    ).fetchone()
-    
-    if not discord_link:
-        # Auto-register or return error
-        raise HTTPException(
-            status_code=401, 
-            detail="Discord user not linked. Use !link command first."
-        )
-    
-    user_id = discord_link[0]
-    
-    # Process note with AI
-    result = ollama_summarize(data.note)
-    summary = result.get("summary", "")
-    ai_tags = result.get("tags", [])
-    ai_actions = result.get("actions", [])
-    
-    # Combine tags
-    tag_list = [t.strip() for t in data.tags.split(",") if t.strip()]
-    tag_list.extend([t for t in ai_tags if t and t not in tag_list])
-    tags = ",".join(tag_list)
-    
-    # Save note
-    c.execute(
-        "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            data.note[:60] + "..." if len(data.note) > 60 else data.note,
-            data.note,
-            summary,
-            tags,
-            "\n".join(ai_actions),
-            data.type,
-            data.timestamp,
-            user_id
-        ),
-    )
-    conn.commit()
-    note_id = c.lastrowid
-    
-    # Update FTS
-    c.execute(
-        "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-        (note_id, data.note[:60], summary, tags, "\n".join(ai_actions), data.note),
-    )
-    conn.commit()
-    conn.close()
-    
-    return {"status": "ok", "note_id": note_id}
+    from services.webhook_service import DiscordWebhook
+    webhook_data = DiscordWebhook(**data)
+    return await webhook_service.process_discord_webhook_legacy(webhook_data, background_tasks)
 
 # Apple Shortcuts Enhanced
 @app.post("/webhook/apple/reminder")
 async def create_apple_reminder(
-    data: AppleReminderWebhook,
+    data: dict,
     current_user: User = Depends(get_current_user)
 ):
     """Create reminder from Apple Shortcuts"""
-    conn = get_conn()
-    c = conn.cursor()
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Create note
-    c.execute(
-        "INSERT INTO notes (title, content, summary, tags, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            data.title,
-            data.notes,
-            f"Reminder: {data.title}",
-            data.tags,
-            "reminder",
-            now,
-            current_user.id
-        ),
-    )
-    note_id = c.lastrowid
-    
-    # Create reminder entry
-    c.execute(
-        "INSERT INTO reminders (note_id, user_id, due_date, completed) VALUES (?, ?, ?, ?)",
-        (note_id, current_user.id, data.due_date, False)
-    )
-    
-    conn.commit()
-    conn.close()
-    
-    return {"status": "ok", "reminder_id": note_id}
+    from services.webhook_service import AppleReminderWebhook
+    webhook_data = AppleReminderWebhook(**data)
+    return webhook_service.process_apple_reminder_webhook(webhook_data, current_user.id)
 
 @app.post("/webhook/apple/calendar")
 async def create_calendar_event(
-    data: CalendarEvent,
+    data: dict,
     current_user: User = Depends(get_current_user)
 ):
     """Create calendar event and meeting note"""
-    # This would integrate with Apple Calendar API
-    # For now, create a meeting note placeholder
-    
-    conn = get_conn()
-    c = conn.cursor()
-    
-    meeting_note = f"""
-Meeting: {data.title}
-Date: {data.start_date} - {data.end_date}
-Attendees: {', '.join(data.attendees)}
+    from services.webhook_service import CalendarEvent
+    webhook_data = CalendarEvent(**data)
+    return webhook_service.process_apple_calendar_webhook(webhook_data, current_user.id)
 
-{data.description}
+# Enhanced Search - MOVED to services/search_router.py
 
---- Meeting Notes ---
-(This will be filled during/after the meeting)
-"""
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    c.execute(
-        "INSERT INTO notes (title, content, summary, tags, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            f"Meeting: {data.title}",
-            meeting_note,
-            f"Scheduled meeting: {data.title}",
-            "meeting,calendar,scheduled",
-            "meeting",
-            now,
-            current_user.id
-        ),
-    )
-    
-    conn.commit()
-    conn.close()
-    
-    return {"status": "ok", "event_created": True}
 
-# Enhanced Search (now backed by unified SearchService)
-@app.post("/api/search")
-async def enhanced_search(
-    request: SearchRequest,
-    current_user: User = Depends(get_current_user)
-):
-    """Advanced search with filters and semantic similarity via SearchService."""
-    svc = _get_search_service()
-    mode = _resolve_search_mode(request.filters)
-    rows = svc.search(request.query, mode=mode, k=request.limit or 20)
-    # Convert sqlite3.Row to dict
-    notes = [{k: row[k] for k in row.keys()} for row in rows]
-    return {
-        "results": notes,
-        "total": len(notes),
-        "query": request.query,
-        "mode": mode
-    }
+# Hybrid Search - MOVED to services/search_router.py
 
-# Analytics
+
+# Search Suggestions - MOVED to services/search_router.py
+
+
+# Helper functions _fuzzy_match and _extract_phrases - MOVED to services/search_router.py
+
+
+# Search Enhancement Endpoint - MOVED to services/search_router.py
 @app.get("/api/analytics")
 async def get_analytics(current_user: User = Depends(get_current_user)):
     """Get user analytics and insights"""
-    conn = get_conn()
-    c = conn.cursor()
-    
-    # Basic stats
-    total_notes = c.execute(
-        "SELECT COUNT(*) as count FROM notes WHERE user_id = ?",
-        (current_user.id,)
-    ).fetchone()["count"]
-    
-    # This week
-    this_week = c.execute(
-        "SELECT COUNT(*) as count FROM notes WHERE user_id = ? AND date(timestamp) >= date('now', '-7 days')",
-        (current_user.id,)
-    ).fetchone()["count"]
-    
-    # By type
-    by_type = c.execute(
-        "SELECT type, COUNT(*) as count FROM notes WHERE user_id = ? GROUP BY type",
-        (current_user.id,)
-    ).fetchall()
-    
-    # Popular tags
-    tag_counts = {}
-    tag_rows = c.execute(
-        "SELECT tags FROM notes WHERE user_id = ? AND tags IS NOT NULL",
-        (current_user.id,)
-    ).fetchall()
-    
-    for row in tag_rows:
-        tags = row["tags"].split(",")
-        for tag in tags:
-            tag = tag.strip()
-            if tag:
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-    
-    popular_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    conn.close()
-    
-    return {
-        "total_notes": total_notes,
-        "this_week": this_week,
-        "by_type": [{"type": row["type"], "count": row["count"]} for row in by_type],
-        "popular_tags": [{"name": tag, "count": count} for tag, count in popular_tags]
-    }
+    return analytics_service.get_user_analytics(current_user)
 
 # Real-time status updates
 @app.get("/api/notes/{note_id}/status")
@@ -1609,7 +1555,7 @@ async def debug_recent_uploads(current_user: User = Depends(get_current_user)):
     }
 
 # Helper function for Discord user authentication
-async def get_current_user_from_discord(discord_id: int = None):
+async def get_current_user_from_discord_id(discord_id: int = None):
     """Map Discord user to Second Brain user"""
     if not discord_id:
         raise HTTPException(status_code=401, detail="Discord user ID required")
@@ -1628,6 +1574,20 @@ async def get_current_user_from_discord(discord_id: int = None):
         raise HTTPException(status_code=401, detail="Discord user not linked")
     
     return User(id=link["id"], username=link["username"])
+
+def get_current_user_from_discord_header(authorization: str = Header(None)) -> User:
+    return auth_service.get_current_user_from_discord(authorization)
+
+# /webhook/discord/legacy should use the header token flow
+@app.post("/webhook/discord/legacy", include_in_schema=False)
+async def webhook_discord_legacy1(
+    data: dict,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user_from_discord_header)
+):
+    from services.webhook_service import DiscordWebhook
+    webhook_data = DiscordWebhook(**data)
+    return await webhook_service.process_discord_webhook_legacy(webhook_data, background_tasks)
 
 
 # Discord Integration
@@ -1678,6 +1638,20 @@ async def webhook_discord_legacy2(
     conn.close()
     
     return {"status": "ok", "note_id": note_id}
+
+
+# /webhook/discord/upload uses the form field discord_user_id mapping flow
+@app.post("/webhook/discord/upload")
+async def webhook_discord_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    note: str = Form(""),
+    tags: str = Form(""),
+    discord_user_id: str = Form(...),
+    type: str = Form("discord_upload"),
+    current_user: User = Depends(get_current_user_from_discord_header)
+):
+    return await webhook_service.process_discord_upload_webhook(file, note, tags, discord_user_id, type, background_tasks)
 
 # Keep all existing endpoints (detail, edit, delete, capture, etc.)
 @app.get("/detail/{note_id}")
@@ -2164,11 +2138,15 @@ async def capture(
         
         # Queue background processing if needed
         if processing_status == "pending":
-            from tasks_enhanced import process_note_with_status
-            background_tasks.add_task(
-                process_note_with_status,
-                note_id
-            )
+            # Prefer realtime-enabled enhanced tasks if available; otherwise fallback
+            try:
+                if REALTIME_AVAILABLE:
+                    background_tasks.add_task(process_note_with_status, note_id)
+                else:
+                    background_tasks.add_task(process_note, note_id)
+            except Exception:
+                # Final fallback to basic processor
+                background_tasks.add_task(process_note, note_id)
         
         # Return success response
         if "application/json" in request.headers.get("accept", ""):
@@ -2203,43 +2181,8 @@ async def webhook_apple(
     data: dict = Body(...),
     current_user: User = Depends(get_current_user),
 ):
-    print("APPLE WEBHOOK RECEIVED:", data)
-    note = data.get("note", "")
-    tags = data.get("tags", "")
-    note_type = data.get("type", "apple")
-    result = ollama_summarize(note)
-    summary = result.get("summary", "")
-    ai_tags = result.get("tags", [])
-    ai_actions = result.get("actions", [])
-    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
-    tag_list.extend([t for t in ai_tags if t and t not in tag_list])
-    tags = ",".join(tag_list)
-    actions = "\n".join(ai_actions)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            note[:60] + "..." if len(note) > 60 else note,
-            note,
-            summary,
-            tags,
-            actions,
-            note_type,
-            now,
-            current_user.id,
-        ),
-    )
-    conn.commit()
-    note_id = c.lastrowid
-    c.execute(
-        "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-        (note_id, note[:60] + "..." if len(note) > 60 else note, summary, tags, actions, note),
-    )
-    conn.commit()
-    conn.close()
-    return {"status": "ok"}
+    """Apple Shortcuts webhook handler"""
+    return webhook_service.process_apple_webhook(data, current_user.id)
 
 @app.post("/sync/obsidian")
 def sync_obsidian(
@@ -2359,408 +2302,527 @@ def note_status(note_id: int, current_user: User = Depends(get_current_user)):
     return {"status": row[0]}
 
 # Enhanced Analytics endpoint
-@app.get("/api/analytics")
-async def get_analytics(current_user: User = Depends(get_current_user)):
-    """Get user analytics and insights"""
-    conn = get_conn()
-    c = conn.cursor()
-    
-    # Basic stats
-    total_notes = c.execute(
-        "SELECT COUNT(*) as count FROM notes WHERE user_id = ?",
-        (current_user.id,)
-    ).fetchone()[0]
-    
-    # This week
-    this_week = c.execute(
-        "SELECT COUNT(*) as count FROM notes WHERE user_id = ? AND date(timestamp) >= date('now', '-7 days')",
-        (current_user.id,)
-    ).fetchone()[0]
-    
-    # By type
-    by_type_rows = c.execute(
-        "SELECT type, COUNT(*) as count FROM notes WHERE user_id = ? GROUP BY type",
-        (current_user.id,)
-    ).fetchall()
-    by_type = [{"type": row[0], "count": row[1]} for row in by_type_rows]
-    
-    # Popular tags
-    tag_counts = {}
-    tag_rows = c.execute(
-        "SELECT tags FROM notes WHERE user_id = ? AND tags IS NOT NULL",
-        (current_user.id,)
-    ).fetchall()
-    
-    for row in tag_rows:
-        if row[0]:
-            tags = row[0].split(",")
-            for tag in tags:
-                tag = tag.strip()
-                if tag:
-                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
-    
-    popular_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    conn.close()
-    
-    return {
-        "total_notes": total_notes,
-        "this_week": this_week,
-        "by_type": by_type,
-        "popular_tags": [{"name": tag, "count": count} for tag, count in popular_tags]
-    }
+# Removed duplicate analytics endpoint - kept first implementation at line ~2784
 
 
-# Add these endpoints before the health check
-@app.post("/api/search/enhanced_legacy", include_in_schema=False)
-async def enhanced_search_legacy(
-    q: str = Query(..., description="Search query"),
-    type: str = Query("hybrid", description="Search type: fts, semantic, or hybrid"),
-    limit: int = Query(20, description="Number of results"),
-    current_user: User = Depends(get_current_user)
+# Removed deprecated legacy search endpoint - functionality consolidated in main search service
+
+@app.post("/webhook/discord/upload")
+async def webhook_discord_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    note: str = Form(""),
+    tags: str = Form(""),
+    discord_user_id: str = Form(...),
+    type: str = Form("discord_upload"),
+    current_user: User = Depends(get_current_user_from_discord_header)
 ):
-    """Deprecated: legacy enhanced search. Delegates to SearchService."""
-    svc = _get_search_service()
-    mode = 'hybrid'
-    if type in {'fts','keyword'}:
-        mode = 'keyword'
-    elif type in {'semantic','vector'}:
-        mode = 'semantic'
-    rows = svc.search(q, mode=mode, k=limit or 20)
-    results = [
-        {
-            "id": r["id"],
-            "title": r.get("title"),
-            "summary": r.get("summary") if "summary" in r.keys() else r.get("body"),
-            "tags": r.get("tags"),
-            "timestamp": r.get("updated_at") or r.get("created_at"),
-            "score": None,
-            "snippet": None,
-            "match_type": mode,
-        }
-        for r in rows
-    ]
-    return {
-        "query": q,
-        "results": results,
-        "total": len(results),
-        "search_type": type,
-        "deprecated": True,
-    }
+    """Discord-specific file upload webhook that bypasses CSRF"""
+    return await webhook_service.process_discord_upload_webhook(file, note, tags, discord_user_id, type, background_tasks)
 
 @app.post("/webhook/discord")
 async def webhook_discord(
     data: dict = Body(...),
     current_user: User = Depends(get_current_user)
 ):
-    # Discord webhook implementation
-    note = data.get("note", "")
-    tags = data.get("tags", "")
-    note_type = data.get("type", "discord")
-    
-    result = ollama_summarize(note)
-    summary = result.get("summary", "")
-    ai_tags = result.get("tags", [])
-    ai_actions = result.get("actions", [])
-    
-    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
-    tag_list.extend([t for t in ai_tags if t and t not in tag_list])
-    tags = ",".join(tag_list)
-    actions = "\n".join(ai_actions)
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            note[:60] + "..." if len(note) > 60 else note,
-            note,
-            summary,
-            tags,
-            actions,
-            note_type,
-            now,
-            current_user.id,
-        ),
-    )
-    conn.commit()
-    note_id = c.lastrowid
-    
-    c.execute(
-        "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-        (note_id, note[:60] + "..." if len(note) > 60 else note, summary, tags, actions, note),
-    )
-    conn.commit()
-    conn.close()
-    
-    return {"status": "ok", "note_id": note_id}
+    """Discord webhook implementation"""
+    return webhook_service.process_discord_webhook(data, current_user.id)
 
-@app.get("/health")
-def health():
-    conn = get_conn()
-    c = conn.cursor()
-    tables = c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-    conn.close()
-    return {"tables": [t[0] for t in tables]}
+@app.get("/api/diagnostics")
+def system_diagnostics(current_user: User = Depends(get_current_user)):
+    """Advanced system diagnostics and performance analysis"""
+    diagnostics = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "database_analytics": {},
+        "search_performance": {},
+        "processing_analytics": {},
+        "configuration_validation": {},
+        "optimization_recommendations": []
+    }
+    
+    try:
+        # Database analytics and performance
+        db_analytics = _get_database_analytics()
+        diagnostics["database_analytics"] = db_analytics
+        
+        # Search system performance analysis
+        search_analytics = _get_search_performance_analytics()
+        diagnostics["search_performance"] = search_analytics
+        
+        # Processing pipeline analysis
+        processing_analytics = _get_processing_analytics()
+        diagnostics["processing_analytics"] = processing_analytics
+        
+        # Configuration validation
+        config_validation = _validate_configuration()
+        diagnostics["configuration_validation"] = config_validation
+        
+        # Generate optimization recommendations
+        recommendations = _generate_optimization_recommendations(
+            db_analytics, search_analytics, processing_analytics, config_validation
+        )
+        diagnostics["optimization_recommendations"] = recommendations
+        
+    except Exception as e:
+        logger.error(f"Diagnostics error: {e}", exc_info=True)
+        diagnostics["error"] = str(e)
+    
+    return diagnostics
+
+@app.post("/api/diagnostics/auto-heal")
+def auto_heal_system(current_user: User = Depends(get_current_user)):
+    """Perform automatic system healing and optimization"""
+    healing_results = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "actions_performed": [],
+        "errors": [],
+        "recommendations": []
+    }
+    
+    try:
+        # Database optimization
+        db_results = _perform_database_healing()
+        healing_results["actions_performed"].extend(db_results.get("actions", []))
+        healing_results["errors"].extend(db_results.get("errors", []))
+        
+        # Queue cleanup
+        queue_results = _perform_queue_healing()
+        healing_results["actions_performed"].extend(queue_results.get("actions", []))
+        healing_results["errors"].extend(queue_results.get("errors", []))
+        
+        # Search index optimization
+        search_results = _perform_search_healing()
+        healing_results["actions_performed"].extend(search_results.get("actions", []))
+        healing_results["errors"].extend(search_results.get("errors", []))
+        
+        # Directory structure healing
+        dir_results = _perform_directory_healing()
+        healing_results["actions_performed"].extend(dir_results.get("actions", []))
+        healing_results["errors"].extend(dir_results.get("errors", []))
+        
+    except Exception as e:
+        logger.error(f"Auto-heal error: {e}", exc_info=True)
+        healing_results["errors"].append(f"Auto-heal failed: {str(e)}")
+    
+    return healing_results
+
+def _get_database_analytics():
+    """Get detailed database performance analytics"""
+    analytics = {
+        "table_statistics": {},
+        "index_usage": {},
+        "query_performance": {},
+        "fragmentation": {}
+    }
+    
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Table statistics with size information
+        tables = c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        for table_row in tables:
+            table = table_row[0]
+            if not table.startswith('sqlite_'):
+                count = c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                
+                # Get table size (approximation)
+                page_count = c.execute(f"PRAGMA table_info({table})").fetchall()
+                analytics["table_statistics"][table] = {
+                    "row_count": count,
+                    "column_count": len(page_count)
+                }
+        
+        # Index analysis
+        indexes = c.execute("SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'").fetchall()
+        for idx_name, tbl_name in indexes:
+            analytics["index_usage"][idx_name] = {"table": tbl_name}
+        
+        # Database file size and page info
+        page_size = c.execute("PRAGMA page_size").fetchone()[0]
+        page_count = c.execute("PRAGMA page_count").fetchone()[0]
+        freelist_count = c.execute("PRAGMA freelist_count").fetchone()[0]
+        
+        analytics["fragmentation"] = {
+            "page_size": page_size,
+            "total_pages": page_count,
+            "free_pages": freelist_count,
+            "fragmentation_percent": round((freelist_count / max(page_count, 1)) * 100, 2),
+            "database_size_mb": round((page_count * page_size) / (1024 * 1024), 2)
+        }
+        
+        conn.close()
+        
+    except Exception as e:
+        analytics["error"] = str(e)
+    
+    return analytics
+
+def _get_search_performance_analytics():
+    """Analyze search system performance"""
+    analytics = {
+        "fts_index_health": {},
+        "search_patterns": {},
+        "performance_metrics": {}
+    }
+    
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # FTS index analysis
+        try:
+            fts_stats = c.execute("SELECT COUNT(*) FROM notes_fts").fetchone()
+            if fts_stats:
+                analytics["fts_index_health"]["indexed_documents"] = fts_stats[0]
+                analytics["fts_index_health"]["status"] = "functional"
+                
+                # Test search performance
+                import time
+                start_time = time.time()
+                c.execute("SELECT COUNT(*) FROM notes_fts WHERE notes_fts MATCH 'test' LIMIT 10")
+                search_time = (time.time() - start_time) * 1000
+                analytics["performance_metrics"]["fts_search_time_ms"] = round(search_time, 2)
+        except Exception as e:
+            analytics["fts_index_health"]["status"] = "error"
+            analytics["fts_index_health"]["error"] = str(e)
+        
+        # Search analytics if table exists
+        try:
+            recent_searches = c.execute("""
+                SELECT query, COUNT(*) as frequency 
+                FROM search_analytics 
+                WHERE timestamp > datetime('now', '-7 days')
+                GROUP BY query 
+                ORDER BY frequency DESC 
+                LIMIT 10
+            """).fetchall()
+            
+            analytics["search_patterns"]["top_queries"] = [
+                {"query": query, "frequency": freq} for query, freq in recent_searches
+            ]
+            
+            avg_results = c.execute("""
+                SELECT AVG(results_count) 
+                FROM search_analytics 
+                WHERE timestamp > datetime('now', '-7 days')
+            """).fetchone()
+            
+            if avg_results and avg_results[0]:
+                analytics["performance_metrics"]["avg_results_per_search"] = round(avg_results[0], 2)
+                
+        except sqlite3.OperationalError:
+            # search_analytics table doesn't exist
+            analytics["search_patterns"]["status"] = "no_analytics_data"
+        
+        conn.close()
+        
+    except Exception as e:
+        analytics["error"] = str(e)
+    
+    return analytics
+
+def _get_processing_analytics():
+    """Analyze processing pipeline performance"""
+    analytics = {
+        "processing_stats": {},
+        "bottlenecks": [],
+        "resource_usage": {}
+    }
+    
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Processing queue analytics
+        queue_stats = c.execute("""
+            SELECT 
+                status,
+                COUNT(*) as count,
+                AVG(CASE 
+                    WHEN started_at IS NOT NULL AND completed_at IS NOT NULL 
+                    THEN (julianday(completed_at) - julianday(started_at)) * 1440 
+                    END) as avg_processing_minutes
+            FROM audio_processing_queue 
+            GROUP BY status
+        """).fetchall()
+        
+        for status, count, avg_time in queue_stats:
+            analytics["processing_stats"][status] = {
+                "count": count,
+                "avg_processing_time_minutes": round(avg_time, 2) if avg_time else None
+            }
+        
+        # Identify bottlenecks
+        long_running = c.execute("""
+            SELECT COUNT(*) 
+            FROM audio_processing_queue 
+            WHERE status = 'processing' 
+            AND started_at < datetime('now', '-1 hour')
+        """).fetchone()[0]
+        
+        if long_running > 0:
+            analytics["bottlenecks"].append(f"{long_running} tasks running for over 1 hour")
+        
+        # Failed task analysis
+        failed_reasons = c.execute("""
+            SELECT status, COUNT(*) 
+            FROM notes 
+            WHERE status LIKE 'failed%' AND type = 'audio'
+            GROUP BY status
+        """).fetchall()
+        
+        if failed_reasons:
+            analytics["processing_stats"]["failures"] = dict(failed_reasons)
+        
+        conn.close()
+        
+    except Exception as e:
+        analytics["error"] = str(e)
+    
+    return analytics
+
+def _validate_configuration():
+    """Validate system configuration"""
+    validation = {
+        "ollama_config": {},
+        "whisper_config": {},
+        "email_config": {},
+        "paths_config": {},
+        "warnings": []
+    }
+    
+    # Ollama configuration
+    validation["ollama_config"] = {
+        "api_url": settings.ollama_api_url,
+        "model": settings.ollama_model,
+        "configured": bool(settings.ollama_api_url and settings.ollama_model)
+    }
+    
+    # Whisper configuration
+    whisper_exists = settings.whisper_cpp_path.exists()
+    model_exists = settings.whisper_model_path.exists()
+    
+    validation["whisper_config"] = {
+        "binary_path": str(settings.whisper_cpp_path),
+        "binary_exists": whisper_exists,
+        "model_path": str(settings.whisper_model_path),
+        "model_exists": model_exists,
+        "transcriber": settings.transcriber
+    }
+    
+    if not whisper_exists:
+        validation["warnings"].append("Whisper binary not found")
+    if not model_exists:
+        validation["warnings"].append("Whisper model file not found")
+    
+    # Email configuration
+    validation["email_config"] = {
+        "enabled": settings.email_enabled,
+        "service": settings.email_service,
+        "configured": bool(settings.email_api_key) if settings.email_enabled else True
+    }
+    
+    # Path configuration
+    paths_to_check = {
+        "vault": settings.vault_path,
+        "audio": settings.audio_dir,
+        "uploads": settings.uploads_dir
+    }
+    
+    for name, path in paths_to_check.items():
+        validation["paths_config"][name] = {
+            "path": str(path),
+            "exists": path.exists(),
+            "writable": path.exists() and os.access(path, os.W_OK)
+        }
+        
+        if not path.exists():
+            validation["warnings"].append(f"Path does not exist: {name}")
+    
+    return validation
+
+def _generate_optimization_recommendations(db_analytics, search_analytics, processing_analytics, config_validation):
+    """Generate system optimization recommendations"""
+    recommendations = []
+    
+    # Database optimization recommendations
+    fragmentation = db_analytics.get("fragmentation", {})
+    if fragmentation.get("fragmentation_percent", 0) > 10:
+        recommendations.append({
+            "category": "database",
+            "priority": "medium",
+            "title": "Database fragmentation detected",
+            "description": f"Database is {fragmentation['fragmentation_percent']:.1f}% fragmented",
+            "action": "Run VACUUM command to defragment database",
+            "auto_fixable": True
+        })
+    
+    # Search index recommendations
+    fts_health = search_analytics.get("fts_index_health", {})
+    if fts_health.get("status") == "error":
+        recommendations.append({
+            "category": "search",
+            "priority": "high",
+            "title": "FTS index issues detected",
+            "description": f"Search index error: {fts_health.get('error', 'Unknown error')}",
+            "action": "Rebuild FTS search index",
+            "auto_fixable": True
+        })
+    
+    # Processing queue recommendations
+    processing_stats = processing_analytics.get("processing_stats", {})
+    if processing_stats.get("processing", {}).get("count", 0) > 10:
+        recommendations.append({
+            "category": "processing",
+            "priority": "medium",
+            "title": "Large processing queue detected",
+            "description": f"{processing_stats['processing']['count']} items currently processing",
+            "action": "Consider increasing processing concurrency",
+            "auto_fixable": False
+        })
+    
+    # Configuration recommendations
+    warnings = config_validation.get("warnings", [])
+    for warning in warnings:
+        recommendations.append({
+            "category": "configuration",
+            "priority": "high" if "not found" in warning else "medium",
+            "title": "Configuration issue",
+            "description": warning,
+            "action": "Check configuration and file paths",
+            "auto_fixable": False
+        })
+    
+    return recommendations
+
+def _perform_database_healing():
+    """Perform automatic database optimization"""
+    results = {"actions": [], "errors": []}
+    
+    try:
+        conn = get_conn()
+        
+        # Check if VACUUM is needed
+        fragmentation_check = conn.execute("PRAGMA freelist_count").fetchone()[0]
+        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+        
+        if fragmentation_check > 0 and (fragmentation_check / max(page_count, 1)) > 0.1:
+            conn.execute("VACUUM")
+            results["actions"].append("Database defragmented using VACUUM")
+        
+        # Optimize database
+        conn.execute("PRAGMA optimize")
+        results["actions"].append("Database statistics optimized")
+        
+        conn.close()
+        
+    except Exception as e:
+        results["errors"].append(f"Database healing error: {str(e)}")
+    
+    return results
+
+def _perform_queue_healing():
+    """Clean up stalled processing queue items"""
+    results = {"actions": [], "errors": []}
+    
+    try:
+        from services.audio_queue import audio_queue
+        
+        # Reset stalled tasks (processing for more than 4 hours)
+        stalled_threshold = datetime.utcnow() - timedelta(hours=4)
+        
+        conn = get_conn()
+        c = conn.cursor()
+        
+        stalled_tasks = c.execute("""
+            SELECT note_id FROM audio_processing_queue 
+            WHERE status = 'processing' AND started_at < ?
+        """, (stalled_threshold.isoformat(),)).fetchall()
+        
+        if stalled_tasks:
+            c.execute("""
+                UPDATE audio_processing_queue 
+                SET status = 'queued', started_at = NULL 
+                WHERE status = 'processing' AND started_at < ?
+            """, (stalled_threshold.isoformat(),))
+            
+            conn.commit()
+            results["actions"].append(f"Reset {len(stalled_tasks)} stalled processing tasks")
+        
+        conn.close()
+        
+    except Exception as e:
+        results["errors"].append(f"Queue healing error: {str(e)}")
+    
+    return results
+
+def _perform_search_healing():
+    """Optimize search indexes"""
+    results = {"actions": [], "errors": []}
+    
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Check if FTS index needs rebuilding
+        try:
+            c.execute("SELECT COUNT(*) FROM notes_fts WHERE notes_fts MATCH 'test' LIMIT 1")
+            results["actions"].append("FTS index verified as functional")
+        except Exception as e:
+            # Try to rebuild FTS index
+            try:
+                c.execute("INSERT INTO notes_fts(notes_fts) VALUES('rebuild')")
+                results["actions"].append("FTS index rebuilt")
+            except Exception as rebuild_error:
+                results["errors"].append(f"FTS index rebuild failed: {str(rebuild_error)}")
+        
+        conn.close()
+        
+    except Exception as e:
+        results["errors"].append(f"Search healing error: {str(e)}")
+    
+    return results
+
+def _perform_directory_healing():
+    """Ensure required directories exist"""
+    results = {"actions": [], "errors": []}
+    
+    try:
+        required_dirs = [
+            settings.vault_path,
+            settings.audio_dir,
+            settings.uploads_dir
+        ]
+        
+        for dir_path in required_dirs:
+            if not dir_path.exists():
+                dir_path.mkdir(parents=True, exist_ok=True)
+                results["actions"].append(f"Created missing directory: {dir_path}")
+        
+    except Exception as e:
+        results["errors"].append(f"Directory healing error: {str(e)}")
+    
+    return results
 
 # Add this to your app.py - Browser Extension Integration
 
 from typing import Dict, Any
-import json
-import hashlib
-import base64
-from urllib.parse import urlparse
+# Unused imports removed - moved to webhook service
 
-class BrowserCapture(BaseModel):
-    note: str
-    tags: str = ""
-    type: str = "browser"
-    metadata: Dict[str, Any] = {}
+# BrowserCapture model moved to services/webhook_service.py
 
 @app.post("/webhook/browser")
 async def webhook_browser(
-    data: BrowserCapture,
+    data: dict,
     current_user: User = Depends(get_current_user)
 ):
     """Enhanced browser capture endpoint with metadata processing"""
-    
-    # Extract metadata
-    metadata = data.metadata
-    url = metadata.get('url', '')
-    title = metadata.get('title', '')
-    capture_type = metadata.get('captureType', 'unknown')
-    
-    # Enhanced content processing
-    content = data.note
-    if capture_type == 'page':
-        content = f"# {title}\n\nSource: {url}\n\n{content}"
-    elif capture_type == 'selection':
-        content = f"Selection from: {title}\nURL: {url}\n\n> {content}"
-    elif capture_type == 'bookmark':
-        content = f"# {title}\n\nURL: {url}\n\n{content}"
-    
-    # Process with AI
-    result = ollama_summarize(content)
-    summary = result.get("summary", "")
-    ai_tags = result.get("tags", [])
-    ai_actions = result.get("actions", [])
-    
-    # Enhanced tag generation
-    tag_list = [t.strip() for t in data.tags.split(",") if t.strip()]
-    tag_list.extend([t for t in ai_tags if t and t not in tag_list])
-    
-    # Add smart tags based on content and URL
-    smart_tags = generate_smart_tags(content, url, metadata)
-    tag_list.extend([t for t in smart_tags if t not in tag_list])
-    
-    tags = ",".join(tag_list)
-    actions = "\n".join(ai_actions)
-    
-    # Generate title
-    note_title = generate_browser_note_title(title, capture_type, content)
-    
-    # Save to database
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_conn()
-    c = conn.cursor()
-    
-    c.execute(
-        """INSERT INTO notes 
-           (title, content, summary, tags, actions, type, timestamp, user_id, metadata) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            note_title,
-            content,
-            summary,
-            tags,
-            actions,
-            data.type,
-            now,
-            current_user.id,
-            json.dumps(metadata)
-        ),
-    )
-    
-    conn.commit()
-    note_id = c.lastrowid
-    
-    # Update FTS index
-    c.execute(
-        "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-        (note_id, note_title, summary, tags, actions, content),
-    )
-    
-    conn.commit()
-    conn.close()
-    
-    # Trigger automated relationship discovery
-    try:
-        automation_engine = getattr(app.state, 'automation_engine', None)
-        if automation_engine:
-            await automation_engine.on_note_created(note_id, current_user.id)
-    except Exception as e:
-        print(f"Browser capture automation trigger failed: {e}")
-    
-    # Optional: Process screenshots or HTML archival
-    if metadata.get('html') and capture_type == 'page':
-        await save_html_archive(note_id, metadata['html'], url)
-    
-    return {
-        "status": "ok", 
-        "note_id": note_id,
-        "title": note_title,
-        "tags": tag_list,
-        "summary": summary
-    }
+    from services.webhook_service import BrowserCapture
+    webhook_data = BrowserCapture(**data)
+    return await webhook_service.process_browser_webhook(webhook_data, current_user.id)
 
-def generate_smart_tags(content: str, url: str, metadata: Dict) -> List[str]:
-    """Generate intelligent tags based on content and context"""
-    tags = []
-    
-    # Domain-based tags
-    if url:
-        try:
-            domain = urlparse(url).netloc.replace('www.', '')
-            tags.append(domain)
-            
-            # Special site handling
-            if 'github.com' in domain:
-                tags.extend(['code', 'development'])
-            elif 'stackoverflow.com' in domain:
-                tags.extend(['programming', 'qa'])
-            elif 'medium.com' in domain or 'blog' in domain:
-                tags.extend(['blog', 'article'])
-            elif 'youtube.com' in domain:
-                tags.extend(['video', 'tutorial'])
-            elif 'twitter.com' in domain or 'x.com' in domain:
-                tags.extend(['social', 'tweet'])
-            elif 'reddit.com' in domain:
-                tags.extend(['reddit', 'discussion'])
-            elif 'arxiv.org' in domain:
-                tags.extend(['research', 'paper'])
-            elif 'wikipedia.org' in domain:
-                tags.extend(['reference', 'wiki'])
-                
-        except Exception:
-            pass
-    
-    # Content-based smart tagging
-    content_lower = content.lower()
-    
-    # Technical content
-    tech_keywords = {
-        'python': ['python', 'programming'],
-        'javascript': ['javascript', 'programming', 'web'],
-        'react': ['react', 'frontend', 'javascript'],
-        'api': ['api', 'development'],
-        'docker': ['docker', 'devops'],
-        'kubernetes': ['kubernetes', 'devops'],
-        'machine learning': ['ml', 'ai'],
-        'artificial intelligence': ['ai', 'technology'],
-        'blockchain': ['blockchain', 'crypto'],
-        'cybersecurity': ['security', 'infosec']
-    }
-    
-    for keyword, related_tags in tech_keywords.items():
-        if keyword in content_lower:
-            tags.extend(related_tags)
-    
-    # Content type detection
-    if any(word in content_lower for word in ['recipe', 'ingredients', 'cooking']):
-        tags.extend(['recipe', 'cooking'])
-    elif any(word in content_lower for word in ['workout', 'exercise', 'fitness']):
-        tags.extend(['fitness', 'health'])
-    elif any(word in content_lower for word in ['tutorial', 'how to', 'guide']):
-        tags.extend(['tutorial', 'howto'])
-    elif any(word in content_lower for word in ['news', 'breaking', 'report']):
-        tags.extend(['news', 'current-events'])
-    elif any(word in content_lower for word in ['research', 'study', 'analysis']):
-        tags.extend(['research', 'academic'])
-    
-    # Remove duplicates and return
-    return list(set(tags))
-
-def generate_browser_note_title(page_title: str, capture_type: str, content: str) -> str:
-    """Generate meaningful titles for browser captures"""
-    
-    if capture_type == 'selection':
-        # Use first few words of selection
-        words = content.split()[:8]
-        title = ' '.join(words)
-        if len(content.split()) > 8:
-            title += '...'
-        return f"Selection: {title}"
-    
-    elif capture_type == 'bookmark':
-        return f"Bookmark: {page_title}"
-    
-    elif capture_type == 'page':
-        return page_title or "Web Page"
-    
-    elif capture_type == 'manual':
-        # Extract first sentence or line
-        first_line = content.split('\n')[0][:60]
-        return first_line if first_line else "Manual Note"
-    
-    else:
-        return page_title or "Web Capture"
-
-async def save_html_archive(note_id: int, html_content: str, url: str):
-    """Save HTML content for archival (optional feature)"""
-    try:
-        archive_dir = settings.base_dir / "archives"
-        archive_dir.mkdir(exist_ok=True)
-        
-        # Create filename from note ID and URL hash
-        url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-        filename = f"note_{note_id}_{url_hash}.html"
-        
-        # Save HTML with basic metadata
-        html_with_meta = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Archived from {url}</title>
-    <meta name="original-url" content="{url}">
-    <meta name="archived-date" content="{datetime.now().isoformat()}">
-    <meta name="second-brain-note-id" content="{note_id}">
-    <style>
-        .second-brain-archive-header {{
-            background: #f3f4f6;
-            padding: 1rem;
-            border-bottom: 1px solid #d1d5db;
-            font-family: system-ui, -apple-system, sans-serif;
-        }}
-    </style>
-</head>
-<body>
-    <div class="second-brain-archive-header">
-        <p><strong>Archived from:</strong> <a href="{url}">{url}</a></p>
-        <p><strong>Saved on:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        <p><strong>Second Brain Note ID:</strong> {note_id}</p>
-    </div>
-    {html_content}
-</body>
-</html>
-"""
-        
-        archive_path = archive_dir / filename
-        archive_path.write_text(html_with_meta, encoding='utf-8')
-        
-        # Update note metadata to include archive path
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute(
-            "UPDATE notes SET archive_path = ? WHERE id = ?",
-            (str(archive_path), note_id)
-        )
-        conn.commit()
-        conn.close()
-        
-    except Exception as e:
-        print(f"Failed to save HTML archive: {e}")
+# Helper functions moved to webhook_service.py
 
 # Add recent captures endpoint for extension
 @app.get("/api/captures/recent")
@@ -2851,26 +2913,7 @@ async def retry_note(note_id: int, current_user: User = Depends(get_current_user
     conn.close()
     return {"ok": True, "status": "pending"}
 
-# Database migration to add metadata and archive_path columns
-def add_browser_capture_columns():
-    """Add columns for browser capture functionality"""
-    conn = get_conn()
-    c = conn.cursor()
-    
-    # Check if columns exist
-    columns = [row[1] for row in c.execute("PRAGMA table_info(notes)")]
-    
-    if 'metadata' not in columns:
-        c.execute("ALTER TABLE notes ADD COLUMN metadata TEXT")
-    
-    if 'archive_path' not in columns:
-        c.execute("ALTER TABLE notes ADD COLUMN archive_path TEXT")
-    
-    conn.commit()
-    conn.close()
-
-# Call this in your init_db() function
-# add_browser_capture_columns()
+# Removed unused database migration function add_browser_capture_columns()
 
 # ---- Enhanced Note API Endpoints ----
 
@@ -3197,3 +3240,167 @@ def generate_text_export(note_dict):
         lines.append(note_dict['content'])
     
     return "\n".join(lines)
+
+# Admin Endpoints for Discord Bot
+@app.post("/api/admin/restart-tasks")
+async def restart_processing_tasks(
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Restart processing tasks (for Discord bot admin commands)"""
+    task_type = request.get("task_type", "failed")
+    
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        if task_type == "all":
+            cursor.execute("UPDATE processing_tasks SET status = 'pending' WHERE status != 'completed'")
+        elif task_type == "failed":
+            cursor.execute("UPDATE processing_tasks SET status = 'pending' WHERE status = 'failed'")
+        elif task_type == "pending":
+            # Reset stuck pending tasks
+            cursor.execute(
+                "UPDATE processing_tasks SET status = 'pending' WHERE status = 'pending' AND updated_at < datetime('now', '-1 hour')"
+            )
+        
+        restarted = cursor.rowcount
+        conn.commit()
+        
+        return {
+            "status": "success",
+            "restarted": restarted,
+            "task_type": task_type
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+@app.post("/api/admin/cleanup") 
+async def cleanup_old_data(
+    request: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Clean up old data (for Discord bot admin commands)"""
+    days = request.get("days", 30)
+    
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        # Remove old completed processing tasks
+        cursor.execute(
+            "DELETE FROM processing_tasks WHERE status = 'completed' AND created_at < datetime('now', '-{} days')".format(days)
+        )
+        removed_tasks = cursor.rowcount
+        
+        # Remove old magic link tokens
+        cursor.execute(
+            "DELETE FROM magic_links WHERE expires_at < datetime('now')"
+        )
+        removed_links = cursor.rowcount
+        
+        # Get database size before cleanup
+        cursor.execute("PRAGMA page_count")
+        page_count = cursor.fetchone()[0]
+        cursor.execute("PRAGMA page_size")
+        page_size = cursor.fetchone()[0]
+        
+        # Run VACUUM to reclaim space
+        cursor.execute("VACUUM")
+        
+        conn.commit()
+        
+        # Calculate approximate space freed (rough estimate)
+        space_freed_mb = (removed_tasks + removed_links) * 0.01  # Very rough estimate
+        
+        return {
+            "status": "success", 
+            "removed": removed_tasks + removed_links,
+            "space_freed": round(space_freed_mb, 2),
+            "details": {
+                "removed_tasks": removed_tasks,
+                "removed_links": removed_links
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
+
+@app.get("/api/stats")
+async def get_system_stats(current_user: User = Depends(get_current_user)):
+    """Get system statistics (for Discord bot)"""
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        # Get note stats
+        cursor.execute("SELECT COUNT(*) FROM notes")
+        total_notes = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(DISTINCT tags) FROM (SELECT TRIM(tag) as tags FROM notes, json_each('["' || REPLACE(REPLACE(tags, ',', '","'), ' ', '') || '"]') WHERE tags IS NOT NULL AND tags != '')")
+        total_tags = cursor.fetchone()[0] if cursor.fetchone() else 0
+        
+        cursor.execute("SELECT COUNT(*) FROM notes WHERE type IN ('audio', 'image', 'pdf', 'file')")
+        total_files = cursor.fetchone()[0]
+        
+        # Get search stats (approximate)
+        total_searches = 0  # Would track in separate table in production
+        avg_response_time = 150  # Placeholder
+        
+        return {
+            "total_notes": total_notes,
+            "total_tags": total_tags, 
+            "total_files": total_files,
+            "total_searches": total_searches,
+            "avg_response_time": avg_response_time
+        }
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+@app.get("/api/notes/recent")
+async def get_recent_notes(
+    limit: int = Query(5, ge=1, le=20),
+    current_user: User = Depends(get_current_user)
+):
+    """Get recent notes (for Discord bot)"""
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute(
+            """
+            SELECT id, title, content, created_at, type, tags
+            FROM notes 
+            WHERE user_id = ?
+            ORDER BY created_at DESC 
+            LIMIT ?
+            """,
+            (current_user.id, limit)
+        )
+        
+        notes = []
+        for row in cursor.fetchall():
+            notes.append({
+                "id": row[0],
+                "title": row[1] or "Untitled",
+                "content": (row[2] or "")[:200],  # Truncate for Discord
+                "created_at": row[3],
+                "type": row[4],
+                "tags": row[5]
+            })
+        
+        return notes
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+def verify_webhook_token_local(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+    # Delegate to auth service imported function
+    from services.auth_service import verify_webhook_token
+    return verify_webhook_token(credentials)

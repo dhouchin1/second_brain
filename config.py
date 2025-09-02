@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     # Maximum size (in bytes) for any uploaded file (audio/images/pdfs)
     # Can be overridden via env var MAX_FILE_SIZE
     max_file_size: int = 200 * 1024 * 1024  # 200MB default
-    whisper_cpp_path: Path = BASE_DIR / "whisper.cpp/build/bin/whisper-cli"
-    whisper_model_path: Path = BASE_DIR / "whisper.cpp/models/ggml-base.en.bin"
+    whisper_cpp_path: Path = BASE_DIR / "build/bin/whisper-cli"
+    whisper_model_path: Path = BASE_DIR / "models/ggml-base.en.bin"
     # Transcription backend: 'whisper' (whisper.cpp) or 'vosk' (lightweight, CPU-only)
     transcriber: str = "whisper"
     # Path to Vosk ASR model directory when using transcriber='vosk'
@@ -38,11 +38,31 @@ class Settings(BaseSettings):
     ai_throttle_delay_seconds: int = 2
     # Processing concurrency for background audio transcription/LLM jobs
     processing_concurrency: int = 2
-    # Transcription concurrency (serialize transcription one-at-a-time)
+    # Transcription concurrency: allow more than one whisper job at once
     transcription_concurrency: int = 1
+    # Batch processing mode: queue multiple files without immediate processing
+    batch_mode_enabled: bool = False
+    # Number of audio files to queue before starting batch processing
+    batch_size_threshold: int = 5
+    # Time to wait (seconds) before processing partial batches
+    batch_timeout_seconds: int = 300  # 5 minutes
+    # Split long WAVs into segments (seconds) to avoid timeouts/CPU spikes
+    transcription_segment_seconds: int = 600
     # Max seconds to process a single note before marking failed:timeout
     # Increase this if you plan to upload longer audio recordings
     processing_timeout_seconds: int = 1800  # 30 minutes
+    
+    # Security settings
+    secret_key: str = Field(
+        default="your-super-secret-key-change-this-in-production",
+        validation_alias=AliasChoices('secret_key', 'SECRET_KEY')
+    )
+    webhook_token: str = Field(
+        default="your-webhook-token-change-this",
+        validation_alias=AliasChoices('webhook_token', 'WEBHOOK_TOKEN')
+    )
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
 
  # NEW: Obsidian + Raindrop
     obsidian_vault_path: str | None = Field(
@@ -86,6 +106,49 @@ class Settings(BaseSettings):
     search_cross_encoder_model: str = Field(
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
         validation_alias=AliasChoices('search_cross_encoder_model', 'SEARCH_CROSS_ENCODER_MODEL')
+    )
+
+    # Email Configuration for Magic Links
+    email_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('email_enabled', 'EMAIL_ENABLED')
+    )
+    email_service: str = Field(
+        default="resend",  # resend, sendgrid, mailgun, smtp
+        validation_alias=AliasChoices('email_service', 'EMAIL_SERVICE')
+    )
+    email_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('email_api_key', 'EMAIL_API_KEY', 'RESEND_API_KEY')
+    )
+    email_from: str = Field(
+        default="noreply@localhost",
+        validation_alias=AliasChoices('email_from', 'EMAIL_FROM')
+    )
+    email_from_name: str = Field(
+        default="Second Brain",
+        validation_alias=AliasChoices('email_from_name', 'EMAIL_FROM_NAME')
+    )
+    # SMTP Configuration (if using email_service=smtp)
+    smtp_host: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('smtp_host', 'SMTP_HOST')
+    )
+    smtp_port: int = Field(
+        default=587,
+        validation_alias=AliasChoices('smtp_port', 'SMTP_PORT')
+    )
+    smtp_username: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('smtp_username', 'SMTP_USERNAME')
+    )
+    smtp_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('smtp_password', 'SMTP_PASSWORD')
+    )
+    smtp_use_tls: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('smtp_use_tls', 'SMTP_USE_TLS')
     )
 
     model_config = SettingsConfigDict(

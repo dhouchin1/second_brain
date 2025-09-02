@@ -54,8 +54,8 @@ class EmbeddingManager:
         """Lazy load semantic search to avoid import errors"""
         if self._semantic_search is None:
             try:
-                from semantic_search import SemanticSearchEngine
-                self._semantic_search = SemanticSearchEngine(self.db_path)
+                from services.search_adapter import SearchService
+                self._semantic_search = SearchService(self.db_path)
             except ImportError as e:
                 logger.warning(f"Semantic search not available: {e}")
                 return None
