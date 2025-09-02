@@ -418,6 +418,11 @@ app.include_router(search_router)
 init_auth_router(get_conn, render_page, set_flash, auth_service)
 app.include_router(auth_router)
 
+# --- Include Smart Automation Router ---
+from services.smart_automation_router import router as automation_router, init_smart_automation_router
+init_smart_automation_router(get_conn)
+app.include_router(automation_router)
+
 # --- Simple FIFO job worker for note processing ---
 import asyncio
 
