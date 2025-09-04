@@ -151,6 +151,32 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices('smtp_use_tls', 'SMTP_USE_TLS')
     )
 
+    # Auto-seeding Configuration
+    auto_seeding_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('auto_seeding_enabled', 'AUTO_SEEDING_ENABLED')
+    )
+    auto_seeding_namespace: str = Field(
+        default=".starter_content",
+        validation_alias=AliasChoices('auto_seeding_namespace', 'AUTO_SEEDING_NAMESPACE')
+    )
+    auto_seeding_embeddings: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('auto_seeding_embeddings', 'AUTO_SEEDING_EMBEDDINGS')
+    )
+    auto_seeding_embed_model: str = Field(
+        default="nomic-embed-text",
+        validation_alias=AliasChoices('auto_seeding_embed_model', 'AUTO_SEEDING_EMBED_MODEL')
+    )
+    auto_seeding_skip_if_content: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('auto_seeding_skip_if_content', 'AUTO_SEEDING_SKIP_IF_CONTENT')
+    )
+    auto_seeding_min_notes: int = Field(
+        default=5,
+        validation_alias=AliasChoices('auto_seeding_min_notes', 'AUTO_SEEDING_MIN_NOTES')
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -465,6 +465,43 @@ from services.search_router import router as search_router, init_search_router
 init_search_router(get_conn, get_current_user, get_current_user_silent)
 app.include_router(search_router)
 
+# --- Include Vault Seeding Router ---
+from services.vault_seeding_router import router as seeding_router, init_vault_seeding_router
+init_vault_seeding_router(get_conn, get_current_user)
+app.include_router(seeding_router)
+
+# --- Include Search Benchmarking Router ---
+from services.search_benchmarking_router import router as benchmarking_router, init_search_benchmarking_router
+init_search_benchmarking_router(get_conn)
+app.include_router(benchmarking_router)
+
+# Initialize Interactive Seeding router
+from services.interactive_seeding_router import router as interactive_seeding_router, init_interactive_seeding_router
+init_interactive_seeding_router(get_conn)
+app.include_router(interactive_seeding_router)
+
+# --- Auto-seeding and Initialization ---
+from services.initialization_service import get_initialization_service
+
+async def _perform_auto_seeding_initialization():
+    """Perform auto-seeding for fresh installations (non-blocking background task)."""
+    try:
+        init_service = get_initialization_service(get_conn)
+        
+        if init_service.is_fresh_installation():
+            print("[STARTUP] Fresh installation detected, performing auto-seeding...")
+            result = init_service.perform_first_run_setup()
+            
+            if result["success"]:
+                print(f"[STARTUP] Auto-seeding completed: {result.get('message', 'Success')}")
+            else:
+                print(f"[STARTUP] Auto-seeding failed: {result.get('error', 'Unknown error')}")
+        else:
+            print("[STARTUP] Existing installation detected, skipping auto-seeding")
+            
+    except Exception as e:
+        print(f"[STARTUP] Auto-seeding initialization failed: {e}")
+
 # --- Simple FIFO job worker for note processing ---
 import asyncio
 
@@ -559,6 +596,48 @@ async def _start_automation():
     #     print("⚠️  Automated relationships not available")
     print("⚠️  Automated relationship discovery temporarily disabled to resolve database locking")
 
+@app.on_event("startup")
+async def _perform_auto_seeding_initialization():
+    """Perform auto-seeding initialization for fresh installations."""
+    if getattr(app.state, "auto_seeding_initialized", False):
+        return
+    app.state.auto_seeding_initialized = True
+    
+    try:
+        from services.initialization_service import get_initialization_service
+        
+        # Run initialization in background to avoid blocking startup
+        async def perform_initialization():
+            try:
+                init_service = get_initialization_service(get_conn)
+                
+                # Check if this is a fresh installation
+                if init_service.is_fresh_installation():
+                    print("🌱 Fresh installation detected, performing first-run setup...")
+                    result = init_service.perform_first_run_setup()
+                    
+                    if result["success"]:
+                        print(f"✅ First-run setup completed: {result['message']}")
+                        if "auto_seeding_result" in result:
+                            seeding_result = result["auto_seeding_result"]
+                            if seeding_result.get("success"):
+                                print(f"🌱 Auto-seeding successful: {seeding_result.get('message', 'Content seeded')}")
+                            else:
+                                print(f"⚠️  Auto-seeding skipped: {seeding_result.get('reason', 'Unknown reason')}")
+                    else:
+                        print(f"❌ First-run setup failed: {result.get('error', 'Unknown error')}")
+                else:
+                    print("ℹ️  Existing installation detected, skipping auto-seeding initialization")
+                    
+            except Exception as e:
+                print(f"❌ Auto-seeding initialization failed: {e}")
+        
+        # Create background task for initialization
+        asyncio.create_task(perform_initialization())
+        
+    except ImportError as e:
+        print(f"⚠️  Auto-seeding initialization not available: {e}")
+
 # Add real-time status endpoints if available
 if REALTIME_AVAILABLE:
     create_status_endpoint(app)
@@ -601,6 +680,22 @@ async def search_page(request: Request):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return render_page(request, "search.html", {"user": user})
+
+@app.get("/vault/seeding")
+async def vault_seeding_page(request: Request):
+    """Vault seeding interface for adding starter content"""
+    user = get_current_user_silent(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return render_page(request, "vault_seeding.html", {"user": user})
+
+@app.get("/interactive-seeding")
+async def interactive_seeding_page(request: Request):
+    """Interactive seeding interface for guided content collection"""
+    user = get_current_user_silent(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return render_page(request, "interactive_seeding.html", {"user": user})
 
 # Auth endpoints moved to services/auth_service.py
 
@@ -2359,6 +2454,138 @@ async def obsidian_status_api(current_user: User = Depends(get_current_user)):
         "database_notes": db_notes,
         "last_sync": get_last_sync(),
     }
+
+# --- Auto-seeding Admin Endpoints ---
+
+@app.get("/api/admin/auto-seeding/status")
+async def get_auto_seeding_status(current_user: User = Depends(get_current_user)):
+    """Get auto-seeding system status and configuration."""
+    try:
+        from services.auto_seeding_service import get_auto_seeding_service
+        from services.initialization_service import get_initialization_service
+        
+        auto_seeding_service = get_auto_seeding_service(get_conn)
+        init_service = get_initialization_service(get_conn)
+        
+        # Get overall system status
+        auto_seeding_status = auto_seeding_service.check_auto_seeding_status()
+        initialization_status = init_service.get_initialization_status()
+        
+        # Get user-specific auto-seeding history
+        user_history = auto_seeding_service.get_auto_seeding_history(current_user.id)
+        
+        # Check if current user should be auto-seeded
+        user_seed_check = auto_seeding_service.should_auto_seed(current_user.id)
+        
+        return {
+            "system_status": auto_seeding_status,
+            "initialization_status": initialization_status,
+            "user_history": user_history,
+            "user_seed_check": user_seed_check,
+            "user_id": current_user.id
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get auto-seeding status: {str(e)}")
+
+@app.post("/api/admin/auto-seeding/trigger")
+async def trigger_auto_seeding(
+    background_tasks: BackgroundTasks,
+    user_id: int = Query(None, description="User ID to seed (defaults to current user)"),
+    force: bool = Query(False, description="Force seeding even if conditions aren't met"),
+    current_user: User = Depends(get_current_user)
+):
+    """Manually trigger auto-seeding for a user."""
+    try:
+        from services.auto_seeding_service import get_auto_seeding_service
+        
+        # Use current user if no user_id specified
+        target_user_id = user_id if user_id is not None else current_user.id
+        
+        auto_seeding_service = get_auto_seeding_service(get_conn)
+        
+        # Perform auto-seeding in background
+        def perform_seeding():
+            try:
+                result = auto_seeding_service.perform_auto_seeding(target_user_id, force=force)
+                print(f"🌱 Manual auto-seeding triggered for user {target_user_id}: {result}")
+                return result
+            except Exception as e:
+                print(f"❌ Manual auto-seeding failed for user {target_user_id}: {e}")
+                raise
+        
+        background_tasks.add_task(perform_seeding)
+        
+        return {
+            "success": True,
+            "message": f"Auto-seeding triggered for user {target_user_id}",
+            "target_user_id": target_user_id,
+            "force": force
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to trigger auto-seeding: {str(e)}")
+
+@app.get("/api/admin/auto-seeding/failed-onboardings")
+async def get_failed_onboardings(
+    limit: int = Query(50, description="Maximum number of failed onboardings to return"),
+    current_user: User = Depends(get_current_user)
+):
+    """Get list of users that had failed onboarding attempts."""
+    try:
+        from services.initialization_service import get_initialization_service
+        
+        init_service = get_initialization_service(get_conn)
+        failed_onboardings = init_service.get_failed_onboardings(limit)
+        
+        return {
+            "failed_onboardings": failed_onboardings,
+            "count": len(failed_onboardings),
+            "limit": limit
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get failed onboardings: {str(e)}")
+
+@app.post("/api/admin/auto-seeding/retry-failed")
+async def retry_failed_onboardings(
+    background_tasks: BackgroundTasks,
+    user_id: int = Query(None, description="Specific user ID to retry (optional)"),
+    current_user: User = Depends(get_current_user)
+):
+    """Retry failed onboarding attempts."""
+    try:
+        from services.initialization_service import get_initialization_service
+        from services.auth_service import _perform_user_auto_seeding
+        
+        init_service = get_initialization_service(get_conn)
+        
+        if user_id:
+            # Retry specific user
+            background_tasks.add_task(_perform_user_auto_seeding, user_id, 0)
+            return {
+                "success": True,
+                "message": f"Retry scheduled for user {user_id}",
+                "retried_users": [user_id]
+            }
+        else:
+            # Retry all failed onboardings
+            failed_onboardings = init_service.get_failed_onboardings(50)
+            retried_users = []
+            
+            for onboarding in failed_onboardings:
+                user_id = onboarding["user_id"]
+                background_tasks.add_task(_perform_user_auto_seeding, user_id, 0)
+                retried_users.append(user_id)
+            
+            return {
+                "success": True,
+                "message": f"Retry scheduled for {len(retried_users)} users",
+                "retried_users": retried_users
+            }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retry failed onboardings: {str(e)}")
 
 @app.get("/activity")
 def activity_timeline(

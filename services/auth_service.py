@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Request, Header, HTTPException, status, Form, Query, Depends
+from fastapi import APIRouter, Request, Header, HTTPException, status, Form, Query, Depends, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
@@ -394,7 +394,7 @@ def init_auth_router(get_conn_func, render_page_func, set_flash_func, auth_servi
 # --- Authentication Endpoints ---
 
 @router.post("/register", response_model=User)
-def register(username: str = Form(...), password: str = Form(...)):
+def register(username: str = Form(...), password: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """Register a new user."""
     conn = get_conn()
     c = conn.cursor()
@@ -410,6 +410,11 @@ def register(username: str = Form(...), password: str = Form(...)):
         conn.close()
         raise HTTPException(status_code=400, detail="Username already registered")
     conn.close()
+    
+    # Schedule auto-seeding for new user in background
+    if user_id:
+        background_tasks.add_task(_perform_user_auto_seeding, user_id)
+    
     return User(id=user_id, username=username)
 
 
@@ -582,7 +587,7 @@ def signup_page(request: Request):
 
 
 @router.post("/signup")
-def signup_submit(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...)):
+def signup_submit(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """Handle signup form submission."""
     if not auth_service.validate_csrf(request, csrf_token):
         return render_page(request, "register.html", {"error": "Invalid form. Please refresh."})
@@ -596,12 +601,18 @@ def signup_submit(request: Request, username: str = Form(...), password: str = F
             (username, hashed),
         )
         conn.commit()
+        user_id = c.lastrowid
     except sqlite3.IntegrityError:
         conn.close()
         resp = render_page(request, "register.html", {"error": "Username already registered"})
         resp.status_code = 400
         return resp
     conn.close()
+    
+    # Schedule auto-seeding for new user in background
+    if user_id:
+        background_tasks.add_task(_perform_user_auto_seeding, user_id)
+    
     token = auth_service.create_access_token({"sub": username}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     resp = RedirectResponse(url="/", status_code=302)
     resp.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60)
@@ -681,6 +692,59 @@ async def start_recording_session(request: Request):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start recording session: {str(e)}")
+
+
+# --- Auto-seeding Helper Functions ---
+
+def _perform_user_auto_seeding(user_id: int, retry_count: int = 0):
+    """Background task to perform auto-seeding for new users with retry logic."""
+    try:
+        import asyncio
+        from services.initialization_service import get_initialization_service
+        
+        init_service = get_initialization_service(get_conn)
+        result = init_service.perform_user_onboarding(user_id, retry_count)
+        
+        if result["success"]:
+            auto_seeding_result = result.get("auto_seeding_result", {})
+            if auto_seeding_result and auto_seeding_result.get("success"):
+                print(f"🌱 Auto-seeding completed for user {user_id}: {auto_seeding_result.get('message', 'Content seeded')}")
+            elif auto_seeding_result:
+                print(f"ℹ️  Auto-seeding skipped for user {user_id}: {auto_seeding_result.get('reason', 'Unknown reason')}")
+            
+            # Check if we need to schedule a retry
+            if result.get("retry_scheduled", False):
+                retry_count = result.get("retry_count", 0)
+                print(f"🔄 Scheduling retry for user {user_id} auto-seeding (attempt {retry_count + 2})")
+                
+                # Schedule retry with delay (exponential backoff: 30s, 60s, 120s)
+                delay = min(30 * (2 ** retry_count), 300)  # Max 5 minutes
+                
+                # Create delayed retry task
+                async def delayed_retry():
+                    await asyncio.sleep(delay)
+                    _perform_user_auto_seeding(user_id, retry_count + 1)
+                
+                asyncio.create_task(delayed_retry())
+        else:
+            print(f"❌ User onboarding failed permanently for user {user_id}: {result.get('error', 'Unknown error')}")
+            
+    except Exception as e:
+        print(f"❌ Auto-seeding background task failed for user {user_id}: {e}")
+        
+        # For unexpected errors, try to schedule one retry if this is the first attempt
+        if retry_count == 0:
+            try:
+                import asyncio
+                print(f"🔄 Scheduling single retry for user {user_id} after unexpected error")
+                
+                async def delayed_retry():
+                    await asyncio.sleep(60)  # Wait 1 minute before retry
+                    _perform_user_auto_seeding(user_id, 1)
+                
+                asyncio.create_task(delayed_retry())
+            except Exception as retry_error:
+                print(f"❌ Failed to schedule retry for user {user_id}: {retry_error}")
 
 
 print("[Auth Service] Loaded successfully")

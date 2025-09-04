@@ -21,6 +21,7 @@ MIGRATIONS = [
     Path('db/migrations/002_vec.sql'),
     Path('db/migrations/004_search_features.sql'),
     Path('db/migrations/005_github_integration.sql'),
+    Path('db/migrations/006_search_benchmarking.sql'),
 ]
 
 class SearchService:

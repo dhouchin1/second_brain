@@ -14,17 +14,22 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 
 ### Service Layer (`services/`)
 The application uses a service-oriented architecture for modularity:
-- **`search_adapter.py`** - Unified search service wrapping SQLite FTS5 + vector search
+- **`search_adapter.py`** - Unified search service wrapping SQLite FTS5 + vector search with hybrid algorithms
+- **`search_index.py`** - Advanced search indexer with chunk-based FTS5 and sqlite-vec integration
 - **`embeddings.py`** - Sentence transformer embedding generation and management
 - **`audio_queue.py`** - Asynchronous audio processing queue
 - **`obsidian_sync.py`** - Service-layer Obsidian integration (newer implementation)
+- **`auto_seeding_service.py`** - Automatic content seeding for new users to bootstrap search performance
+- **`vault_seeding_service.py`** - Core vault seeding infrastructure with configurable content sets
+- **Service Routers**: Modular FastAPI routers for specialized functionality (`*_router.py` files)
 
 ### Processing Pipeline
 1. **Input Capture** - Multiple sources: web UI, Discord bot, Apple Shortcuts, file uploads
 2. **Content Processing** - Audio transcription (whisper.cpp/Vosk), OCR, PDF extraction
 3. **AI Enhancement** - LLM-powered summarization, tagging, and title generation via Ollama
 4. **Storage & Indexing** - SQLite database with FTS5 and optional vector embeddings
-5. **Obsidian Integration** - Real-time sync with YAML frontmatter for metadata
+5. **Auto-Seeding** - Intelligent content seeding for new users with starter knowledge base
+6. **Obsidian Integration** - Real-time sync with YAML frontmatter for metadata
 
 ### Key Integration Points
 - **Obsidian Sync**: Bi-directional sync with vault, YAML frontmatter processing for transcriptions and metadata
@@ -40,7 +45,14 @@ The application uses a service-oriented architecture for modularity:
 
 # Database operations
 python migrate_db.py                    # Run database migrations
-python db_indexer.py                   # Rebuild search indices
+python db_indexer.py                   # Legacy vault indexing (deprecated)
+
+# Auto-seeding operations
+python -c "from services.auto_seeding_service import get_auto_seeding_service; from database import get_db_connection; service = get_auto_seeding_service(get_db_connection); print(service.check_auto_seeding_status())"
+python -c "from services.vault_seeding_service import get_seeding_service; from database import get_db_connection; service = get_seeding_service(get_db_connection); print(service.get_available_seed_content())"
+
+# Search indexing operations
+python -c "from services.search_index import SearchIndexer; indexer = SearchIndexer(); indexer.rebuild_all(embeddings=True)"
 
 # Discord bot setup
 python setup_discord_bot.py            # Configure Discord bot
@@ -89,9 +101,13 @@ SQLITE_VEC_PATH=/path/to/sqlite-vec0.dylib  # Vector similarity search
 - Vector extensions: `002_vec.sql` (requires sqlite-vec)
 
 ### Search Implementation
-- **FTS5**: Primary full-text search via SQLite built-in
-- **Vector Search**: Optional semantic search via sqlite-vec extension
-- **Hybrid Search**: Combines keyword + semantic results with cross-encoder reranking
+- **FTS5**: Primary full-text search via SQLite built-in with BM25 ranking and advanced snippet generation
+- **Vector Search**: Optional semantic search via sqlite-vec extension with cosine similarity
+- **Hybrid Search**: Advanced Reciprocal Rank Fusion (RRF) combining keyword + semantic results
+- **Chunk-based Indexing**: Sophisticated content chunking for improved search granularity
+- **Query Sanitization**: Robust FTS5 query preprocessing to handle special characters
+- **Auto-Seeding**: Intelligent content bootstrapping with curated starter notes, bookmarks, and examples
+- **Search Analytics**: Performance monitoring and query tracking for optimization
 
 ## Processing Flow
 
@@ -110,11 +126,12 @@ SQLITE_VEC_PATH=/path/to/sqlite-vec0.dylib  # Vector similarity search
 
 ## Development Focus Areas
 
-### Current Branch: `feature/consolidation`
-- Unifying search services and eliminating legacy code
-- Enhanced Obsidian YAML frontmatter integration
-- Service layer modularity improvements
-- Background processing optimizations
+### Current Branch: `feature/smart-automation-multitenant`
+- ✅ **Auto-seeding Complete**: Intelligent content seeding for new users with configurable namespaces
+- ✅ **Advanced Search Indexer**: Chunk-based indexing with FTS5 + sqlite-vec hybrid search
+- ✅ **Service Architecture**: Modular router system with comprehensive service layer
+- 🔄 **Multi-tenant Foundations**: User isolation and intelligent content routing
+- 🔄 **Smart Automation**: Workflow automation and intelligent content processing
 
 ### Key Integration Patterns
 - **Service Registration**: Services auto-register with FastAPI via router inclusion

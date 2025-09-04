@@ -24,10 +24,13 @@
 - **Automatic Tagging** - Context-aware tag generation for better organization  
 - **Action Item Extraction** - Identifies tasks and follow-ups automatically
 - **Title Generation** - Creates meaningful titles from content analysis
+- **Auto-Seeding** - Intelligent content bootstrapping for new users with curated starter content
 
 ### 🔍 **Intelligent Search**
-- **Hybrid Search** - Combines keyword (FTS5) and semantic (vector) search
-- **Real-time Results** - Sub-100ms search response times
+- **Hybrid Search** - Advanced Reciprocal Rank Fusion (RRF) combining keyword + semantic results
+- **Chunk-based Indexing** - Sophisticated content chunking for improved search granularity
+- **Real-time Results** - Sub-100ms search response times with BM25 ranking
+- **Vector Similarity** - Optional sqlite-vec extension for semantic search capabilities
 - **Advanced Filtering** - Search by type, date, tags, and content
 - **Snippet Highlighting** - Contextual result previews with matched terms
 
@@ -71,6 +74,12 @@ python migrate_db.py
 
 # Start the application
 .venv/bin/python -m uvicorn app:app --reload --port 8082
+
+# Optional: Enable auto-seeding for new users (recommended)
+# Auto-seeding will automatically populate new accounts with starter content
+# Set in .env file:
+# AUTO_SEEDING_ENABLED=true
+# AUTO_SEEDING_NAMESPACE=.starter_content
 ```
 
 ### Access the Application
@@ -120,6 +129,9 @@ python migrate_db.py
 The application follows a **service-oriented architecture** for modularity and maintainability:
 
 - **`services/search_adapter.py`** - Unified search interface with FTS5 + vector search
+- **`services/search_index.py`** - Advanced search indexer with chunk-based indexing and RRF
+- **`services/auto_seeding_service.py`** - Intelligent content seeding for new user onboarding
+- **`services/vault_seeding_service.py`** - Core vault seeding infrastructure with configurable content
 - **`services/webhook_service.py`** - External webhook handling (Discord, Apple, Browser)
 - **`services/upload_service.py`** - File upload management with chunked transfers
 - **`services/analytics_service.py`** - Usage analytics and insights
@@ -147,6 +159,12 @@ WHISPER_MODEL_PATH=./models/ggml-base.en.bin
 # Database
 DATABASE_URL=sqlite:///./notes.db
 SQLITE_VEC_PATH=/path/to/sqlite-vec0.dylib  # Optional vector search
+
+# Auto-Seeding Configuration
+AUTO_SEEDING_ENABLED=true                  # Enable automatic content seeding
+AUTO_SEEDING_NAMESPACE=.starter_content    # Namespace for seeded content
+AUTO_SEEDING_EMBEDDINGS=true              # Generate embeddings for seed content
+AUTO_SEEDING_MIN_NOTES=5                  # Minimum notes before skipping auto-seed
 
 # Security
 SECRET_KEY=your-secret-key-here
@@ -414,7 +432,11 @@ python test_search_performance.py
 
 # Database operations
 python migrate_db.py              # Run migrations
-python -c "from embedding_manager import EmbeddingManager; EmbeddingManager().rebuild_embeddings()"
+python -c "from services.search_index import SearchIndexer; SearchIndexer().rebuild_all(embeddings=True)"
+
+# Auto-seeding operations
+python -c "from services.auto_seeding_service import get_auto_seeding_service; from database import get_db_connection; service = get_auto_seeding_service(get_db_connection); print(service.check_auto_seeding_status())"
+python -c "from services.vault_seeding_service import get_seeding_service; from database import get_db_connection; from services.vault_seeding_service import SeedingOptions; service = get_seeding_service(get_db_connection); result = service.seed_vault(1, SeedingOptions()); print(result)"
 
 # Discord bot setup
 python setup_discord_bot.py       # Configure bot
@@ -613,13 +635,15 @@ export LOG_LEVEL=DEBUG
 
 ## 📈 Roadmap
 
-### Current Status (v1.5)
+### Current Status (v1.6 - Auto-Seeding & Advanced Search)
 - ✅ Multi-modal capture and processing
-- ✅ Hybrid search with semantic understanding  
-- ✅ Real-time Obsidian synchronization
+- ✅ Advanced hybrid search with Reciprocal Rank Fusion (RRF)
+- ✅ Chunk-based search indexing with FTS5 + sqlite-vec integration
+- ✅ Auto-seeding service for intelligent new user onboarding
+- ✅ Real-time Obsidian synchronization with YAML frontmatter
 - ✅ Discord bot with slash commands
 - ✅ Web dashboard with modern UI
-- ✅ Service-oriented architecture refactoring
+- ✅ Complete service-oriented architecture
 
 ### Upcoming Features (v2.0)
 - 📱 **Native Mobile Apps** - iOS and Android applications
