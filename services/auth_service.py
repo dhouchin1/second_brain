@@ -123,6 +123,36 @@ class AuthService:
         encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         return encoded_jwt
     
+    def create_extended_access_token(self, data: dict, minutes: int = 60) -> str:
+        """Create JWT access token with extended duration for recording sessions."""
+        to_encode = data.copy()
+        expire = datetime.utcnow() + timedelta(minutes=minutes)
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        return encoded_jwt
+    
+    def get_token_from_request(self, request: Request) -> Optional[str]:
+        """Extract JWT token from request (cookie or authorization header)."""
+        # First try to get from authorization cookie
+        token = request.cookies.get("access_token")
+        if token:
+            return token
+        
+        # Then try authorization header
+        auth_header = request.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            return auth_header.split(" ")[1]
+        
+        return None
+    
+    def validate_and_decode_token(self, token: str) -> Optional[dict]:
+        """Validate and decode JWT token, return payload if valid."""
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            return payload
+        except JWTError:
+            return None
+    
     def create_file_token(self, user_id: int, filename: str, ttl_seconds: int = 600) -> str:
         """Create a short-lived JWT token for accessing a specific file.
         
@@ -239,6 +269,25 @@ class AuthService:
                 
         except Exception as e:
             print(f"Error cleaning up magic links: {e}")
+    
+    # --- Session Extension for Recording ---
+    
+    def extend_session_for_recording(self, request: Request, duration_minutes: int = 60) -> Optional[str]:
+        """Extend user session for active recording - returns new token or None."""
+        token = self.get_token_from_request(request)
+        if not token:
+            return None
+        
+        payload = self.validate_and_decode_token(token)
+        if not payload or "sub" not in payload:
+            return None
+        
+        # Create new token with extended duration
+        new_token = self.create_extended_access_token(
+            {"sub": payload["sub"]}, 
+            minutes=duration_minutes
+        )
+        return new_token
     
     # --- CSRF Protection ---
     
@@ -558,3 +607,80 @@ def signup_submit(request: Request, username: str = Form(...), password: str = F
     resp.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60)
     set_flash(resp, "Account created!", "success")
     return resp
+
+
+@router.post("/api/auth/extend-session")
+async def extend_session_for_recording(request: Request, duration_minutes: int = 60):
+    """Extend user session for active recording sessions"""
+    try:
+        # Get current user first to validate they're logged in
+        current_user = await auth_service.get_current_user(request)
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # Create new extended token
+        new_token = auth_service.create_extended_access_token(
+            {"sub": current_user.username}, 
+            minutes=duration_minutes
+        )
+        
+        response = JSONResponse(content={
+            "success": True,
+            "message": f"Session extended for {duration_minutes} minutes",
+            "expires_in_minutes": duration_minutes
+        })
+        
+        # Set the new token as a cookie
+        response.set_cookie(
+            key="access_token",
+            value=new_token,
+            httponly=True,
+            max_age=duration_minutes * 60,  # Convert to seconds
+            samesite="lax"
+        )
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extend session: {str(e)}")
+
+
+@router.post("/api/auth/recording-session")
+async def start_recording_session(request: Request):
+    """Start a recording session with extended authentication (60 min + 15 min buffer)"""
+    try:
+        # Get current user to validate they're logged in
+        current_user = await auth_service.get_current_user(request)
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        # Create extended token for recording (75 minutes = 60 min recording + 15 min processing buffer)
+        extended_token = auth_service.create_extended_access_token(
+            {"sub": current_user.username}, 
+            minutes=75
+        )
+        
+        response = JSONResponse(content={
+            "success": True,
+            "message": "Recording session started - session extended to 75 minutes",
+            "session_duration_minutes": 75,
+            "recording_time_limit_minutes": 60,
+            "processing_buffer_minutes": 15
+        })
+        
+        # Set the extended token as a cookie
+        response.set_cookie(
+            key="access_token",
+            value=extended_token,
+            httponly=True,
+            max_age=75 * 60,  # 75 minutes in seconds
+            samesite="lax"
+        )
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start recording session: {str(e)}")
+
+
+print("[Auth Service] Loaded successfully")

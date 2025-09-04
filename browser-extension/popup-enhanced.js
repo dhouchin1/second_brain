@@ -47,6 +47,11 @@ class SecondBrainExtension {
     }
 
     setupEventListeners() {
+        // Instant capture buttons
+        document.getElementById('instantSelection').addEventListener('click', () => this.instantCaptureSelection());
+        document.getElementById('instantPage').addEventListener('click', () => this.instantCapturePage());
+        document.getElementById('instantBookmark').addEventListener('click', () => this.instantBookmark());
+        
         // Enhanced capture buttons
         document.getElementById('captureSelection').addEventListener('click', () => this.captureSelection());
         document.getElementById('capturePage').addEventListener('click', () => this.capturePage());
@@ -85,6 +90,73 @@ class SecondBrainExtension {
         this.startRealtimeUpdates();
     }
 
+    // Instant capture methods for frictionless operation
+    async instantCaptureSelection() {
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            const result = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                function: () => window.getSelection().toString().trim()
+            });
+            
+            if (result[0]?.result) {
+                this.showProgress('Instantly saving selection...');
+                await this.processCapturedContent({
+                    title: 'Selected Text',
+                    content: result[0].result,
+                    url: tab.url,
+                    type: 'instant-selection'
+                }, 'instant-selection');
+                window.close(); // Auto-close popup for instant feel
+            } else {
+                this.showError('No text selected');
+            }
+        } catch (error) {
+            this.showError('Failed to capture selection: ' + error.message);
+        }
+    }
+
+    async instantCapturePage() {
+        try {
+            this.showProgress('Instantly saving page...');
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            
+            // Quick page capture without heavy processing
+            const payload = {
+                title: tab.title,
+                url: tab.url,
+                content: `# ${tab.title}\n\n**URL**: ${tab.url}\n\n*Instant capture from ${new Date().toLocaleString()}*`,
+                type: 'instant-page',
+                timestamp: new Date().toISOString()
+            };
+            
+            await this.processCapturedContent(payload, 'instant-page');
+            window.close(); // Auto-close for speed
+        } catch (error) {
+            this.showError('Failed to capture page: ' + error.message);
+        }
+    }
+
+    async instantBookmark() {
+        try {
+            this.showProgress('Creating instant bookmark...');
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            
+            const payload = {
+                title: `📖 ${tab.title}`,
+                url: tab.url, 
+                content: `# ${tab.title}\n\n**URL**: [${tab.url}](${tab.url})\n\n**Bookmarked**: ${new Date().toLocaleString()}\n\n---\n\n*Quick bookmark for later reference*`,
+                type: 'instant-bookmark',
+                timestamp: new Date().toISOString()
+            };
+            
+            await this.processCapturedContent(payload, 'instant-bookmark');
+            window.close(); // Auto-close for instant feel
+        } catch (error) {
+            this.showError('Failed to create bookmark: ' + error.message);
+        }
+    }
+
     async detectPageContent() {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -98,6 +170,7 @@ class SecondBrainExtension {
             if (results[0]?.result) {
                 this.pageAnalysis = results[0].result;
                 this.updateContentSuggestions();
+                this.updateInstantActions();
             }
         } catch (error) {
             console.error('Content detection failed:', error);
@@ -272,6 +345,18 @@ class SecondBrainExtension {
                     .map(tag => `<span class="tag-suggestion" onclick="addTag('${tag}')">${tag}</span>`)
                     .join('');
             }
+        }
+    }
+
+    updateInstantActions() {
+        const instantSelection = document.getElementById('instantSelection');
+        
+        if (this.pageAnalysis?.hasSelection && this.pageAnalysis.selectedText) {
+            instantSelection.style.display = 'block';
+            const wordCount = this.pageAnalysis.selectedText.split(' ').length;
+            instantSelection.innerHTML = `<span class="emoji">📝</span> Save Selection Instantly (${wordCount} words)`;
+        } else {
+            instantSelection.style.display = 'none';
         }
     }
 

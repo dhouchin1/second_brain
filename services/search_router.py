@@ -18,10 +18,11 @@ import re
 from typing import Optional, Dict, List, Any
 from functools import lru_cache
 
-from fastapi import APIRouter, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body, Request, HTTPException
 from pydantic import BaseModel
 
 from services.search_adapter import SearchService
+from services.search_history_service import SearchHistoryService
 # get_conn will be passed from app.py context
 from services.auth_service import User
 from config import settings
@@ -29,6 +30,8 @@ from config import settings
 # Global variables to hold functions from app.py context
 get_conn = None
 get_current_user = None
+get_current_user_silent = None
+search_history_service = None
 
 class SearchRequest(BaseModel):
     query: str
@@ -58,11 +61,13 @@ class EnhancementResponse(BaseModel):
 # Initialize router
 router = APIRouter(prefix="/api/search", tags=["search"])
 
-def init_search_router(get_conn_func, get_current_user_func):
+def init_search_router(get_conn_func, get_current_user_func, get_current_user_silent_func):
     """Initialize search router with functions from app.py"""
-    global get_conn, get_current_user
+    global get_conn, get_current_user, get_current_user_silent, search_history_service
     get_conn = get_conn_func
     get_current_user = get_current_user_func
+    get_current_user_silent = get_current_user_silent_func
+    search_history_service = SearchHistoryService(get_conn_func)
 
 
 # ─── Utility Functions ──────────────────────────────────────────────────────
@@ -203,6 +208,7 @@ async def enhanced_search(
     current_user: User = Depends(get_current_user)
 ):
     """Enhanced search delegating to the unified SearchService with optional filters"""
+    start_time = time.time()
     svc = _get_search_service()
     f = request.filters or {}
     mode = _resolve_search_mode(f)
@@ -216,11 +222,22 @@ async def enhanced_search(
     if 'type' in f and f['type'] not in {'fts','keyword','semantic','vector','hybrid','both'}:
         notes = [n for n in notes if n.get('type') == f['type']]
     
+    # Record search in history
+    response_time_ms = int((time.time() - start_time) * 1000)
+    if search_history_service and request.query.strip():
+        try:
+            search_history_service.record_search(
+                current_user.id, request.query, mode, len(notes), response_time_ms
+            )
+        except Exception as e:
+            print(f"Search history recording error: {e}")
+    
     return {
         "results": notes,
         "total": len(notes),
         "query": request.query,
-        "mode": mode
+        "mode": mode,
+        "response_time_ms": response_time_ms
     }
 
 
@@ -231,16 +248,29 @@ async def search(
     current_user: User = Depends(get_current_user)
 ):
     """Advanced search with filters and semantic similarity via SearchService"""
+    start_time = time.time()
     svc = _get_search_service()
     mode = _resolve_search_mode(request.filters)
     rows = svc.search(request.query, mode=mode, k=request.limit or 20)
     # Convert sqlite3.Row to dict
     notes = [{k: row[k] for k in row.keys()} for row in rows]
+    
+    # Record search in history
+    response_time_ms = int((time.time() - start_time) * 1000)
+    if search_history_service and request.query.strip():
+        try:
+            search_history_service.record_search(
+                current_user.id, request.query, mode, len(notes), response_time_ms
+            )
+        except Exception as e:
+            print(f"Search history recording error: {e}")
+    
     return {
         "results": notes,
         "total": len(notes),
         "query": request.query,
-        "mode": mode
+        "mode": mode,
+        "response_time_ms": response_time_ms
     }
 
 
@@ -351,14 +381,35 @@ async def search_suggestions(
     
     suggestions = []
     
-    # 1. Recent searches by this user
-    recent_searches = c.execute(
-        """SELECT DISTINCT query FROM search_history 
-           WHERE user_id = ? AND query LIKE ? 
-           ORDER BY created_at DESC LIMIT 3""",
-        (current_user.id, f"%{q}%")
-    ).fetchall()
-    suggestions.extend([{"text": row["query"], "type": "recent", "icon": "🕐"} for row in recent_searches])
+    # 1. Recent searches by this user (now using search history service)
+    if search_history_service:
+        try:
+            recent_history = search_history_service.get_search_history(current_user.id, limit=10)
+            matching_recent = [h for h in recent_history if q.lower() in h.query.lower()]
+            suggestions.extend([
+                {"text": h.query, "type": "recent", "icon": "🕐", 
+                 "count": f"{h.results_count} results"} 
+                for h in matching_recent[:3]
+            ])
+        except Exception as e:
+            print(f"Recent search history error: {e}")
+            # Fallback to direct query
+            recent_searches = c.execute(
+                """SELECT DISTINCT query FROM search_history 
+                   WHERE user_id = ? AND query LIKE ? 
+                   ORDER BY created_at DESC LIMIT 3""",
+                (current_user.id, f"%{q}%")
+            ).fetchall()
+            suggestions.extend([{"text": row["query"], "type": "recent", "icon": "🕐"} for row in recent_searches])
+    else:
+        # Fallback to direct query if service not available
+        recent_searches = c.execute(
+            """SELECT DISTINCT query FROM search_history 
+               WHERE user_id = ? AND query LIKE ? 
+               ORDER BY created_at DESC LIMIT 3""",
+            (current_user.id, f"%{q}%")
+        ).fetchall()
+        suggestions.extend([{"text": row["query"], "type": "recent", "icon": "🕐"} for row in recent_searches])
     
     # 2. Smart title suggestions with fuzzy matching
     title_matches = c.execute(
@@ -572,3 +623,438 @@ Query types: keyword (exact matches), semantic (meaning-based), hybrid (both)
             "query_type": "hybrid",
             "expansion_terms": []
         }
+
+
+# ─── Unified Search Endpoints ───────────────────────────────────────────────
+
+@router.post("/unified")
+async def unified_search_endpoint(
+    request: SearchRequest,
+    fastapi_request: Request
+):
+    """
+    Unified search that combines notes and smart templates
+    """
+    try:
+        # Get current user from session
+        current_user = None
+        if get_current_user_silent:
+            current_user = get_current_user_silent(fastapi_request)
+        
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        from services.unified_search_service import UnifiedSearchService
+        import os
+        from config import settings
+        
+        # Initialize unified search service
+        db_path = os.getenv('SQLITE_DB', str(settings.db_path))
+        vec_path = os.getenv('SQLITE_VEC_PATH')
+        
+        unified_service = UnifiedSearchService(
+            get_conn_func=get_conn,
+            db_path=db_path,
+            vec_ext_path=vec_path
+        )
+        
+        # Extract search parameters
+        query = request.query.strip()
+        search_mode = request.filters.get("mode", "hybrid") if request.filters else "hybrid"
+        limit = request.limit or 20
+        include_templates = request.filters.get("include_templates", True) if request.filters else True
+        
+        # Build context from request
+        context = {
+            "user_agent": request.filters.get("user_agent", "") if request.filters else "",
+            "search_source": "dashboard",
+            "has_calendar_event": request.filters.get("has_calendar_event", False) if request.filters else False
+        }
+        
+        # Perform unified search
+        search_results = await unified_service.unified_search(
+            query=query,
+            user_id=current_user.id,
+            search_mode=search_mode,
+            limit=limit,
+            include_templates=include_templates,
+            context=context
+        )
+        
+        return {
+            "success": True,
+            "query": query,
+            "search_mode": search_mode,
+            "user_id": current_user.id,
+            **search_results
+        }
+        
+    except Exception as e:
+        print(f"Unified search error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "results": [],
+            "analytics": {},
+            "suggestions": [],
+            "total": 0
+        }
+
+
+@router.get("/unified/suggestions")  
+async def unified_search_suggestions(
+    fastapi_request: Request,
+    q: str = Query(..., description="Search query for unified suggestions")
+):
+    """Get unified search suggestions including templates"""
+    try:
+        # Get current user from session
+        current_user = None
+        if get_current_user_silent:
+            current_user = get_current_user_silent(fastapi_request)
+        
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        from services.unified_search_service import UnifiedSearchService
+        import os
+        from config import settings
+        
+        if len(q.strip()) < 2:
+            return {"suggestions": []}
+        
+        # Initialize service
+        db_path = os.getenv('SQLITE_DB', str(settings.db_path))
+        vec_path = os.getenv('SQLITE_VEC_PATH')
+        
+        unified_service = UnifiedSearchService(
+            get_conn_func=get_conn,
+            db_path=db_path,
+            vec_ext_path=vec_path
+        )
+        
+        # Get suggestions from unified service
+        suggestions = await unified_service._get_search_suggestions(q, current_user.id)
+        
+        # Also get template suggestions
+        template_context = {"user_id": current_user.id}
+        template_suggestions = await unified_service.templates_service.suggest_templates(q, template_context)
+        
+        # Add template suggestions to the mix
+        for template in template_suggestions[:3]:  # Limit to top 3 templates
+            suggestions.append({
+                "text": f"Create {template['name']}",
+                "type": "template",
+                "icon": "✨",
+                "template_id": template["template_id"],
+                "description": template["description"]
+            })
+        
+        return {"suggestions": suggestions[:10]}  # Limit to 10 total suggestions
+        
+    except Exception as e:
+        print(f"Unified suggestions error: {e}")
+        return {"suggestions": []}
+
+
+@router.get("/test")
+async def test_search(
+    q: str = Query("test", description="Test query"),
+    mode: str = Query("keyword", description="Search mode")
+):
+    """Test endpoint for search functionality without authentication"""
+    try:
+        svc = _get_search_service()
+        rows = svc.search(q, mode=mode, k=10)
+        results = [{k: row[k] for k in row.keys()} for row in rows]
+        
+        return {
+            "success": True,
+            "query": q,
+            "mode": mode,
+            "results": results,
+            "total": len(results)
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "query": q,
+            "mode": mode,
+            "results": [],
+            "total": 0
+        }
+
+
+# ─── Search History & Saved Searches Endpoints ──────────────────────────────
+
+@router.get("/history")
+async def get_search_history(
+    limit: int = Query(20, description="Number of recent searches"),
+    current_user: User = Depends(get_current_user)
+):
+    """Get user's search history"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        history = search_history_service.get_search_history(current_user.id, limit)
+        return {
+            "success": True,
+            "history": [
+                {
+                    "id": h.id,
+                    "query": h.query,
+                    "search_mode": h.search_mode,
+                    "results_count": h.results_count,
+                    "response_time_ms": h.response_time_ms,
+                    "created_at": h.created_at.isoformat()
+                }
+                for h in history
+            ],
+            "total": len(history)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get search history: {str(e)}")
+
+
+@router.get("/history/popular")
+async def get_popular_searches(
+    limit: int = Query(10, description="Number of popular searches"),
+    current_user: User = Depends(get_current_user)
+):
+    """Get user's most popular searches"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        popular = search_history_service.get_popular_searches(current_user.id, limit)
+        return {
+            "success": True,
+            "popular_searches": popular,
+            "total": len(popular)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get popular searches: {str(e)}")
+
+
+@router.post("/save")
+async def save_search(
+    name: str = Body(..., embed=True, description="Name for the saved search"),
+    query: str = Body(..., embed=True, description="Search query to save"),
+    search_mode: str = Body("hybrid", embed=True, description="Search mode"),
+    filters: Dict[str, Any] = Body(None, embed=True, description="Additional filters"),
+    is_favorite: bool = Body(False, embed=True, description="Mark as favorite"),
+    current_user: User = Depends(get_current_user)
+):
+    """Save a search for quick access"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        saved_search_id = search_history_service.save_search(
+            current_user.id, name, query, search_mode, filters or {}, is_favorite
+        )
+        return {
+            "success": True,
+            "saved_search_id": saved_search_id,
+            "name": name,
+            "message": "Search saved successfully"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save search: {str(e)}")
+
+
+@router.get("/saved")
+async def get_saved_searches(
+    current_user: User = Depends(get_current_user)
+):
+    """Get user's saved searches"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        saved_searches = search_history_service.get_saved_searches(current_user.id)
+        return {
+            "success": True,
+            "saved_searches": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "query": s.query,
+                    "search_mode": s.search_mode,
+                    "filters": s.filters,
+                    "is_favorite": s.is_favorite,
+                    "created_at": s.created_at.isoformat(),
+                    "updated_at": s.updated_at.isoformat(),
+                    "last_used_at": s.last_used_at.isoformat()
+                }
+                for s in saved_searches
+            ],
+            "total": len(saved_searches)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get saved searches: {str(e)}")
+
+
+@router.post("/saved/{saved_search_id}/use")
+async def use_saved_search(
+    saved_search_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Use a saved search and perform the search"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        # Mark as used and get search details
+        saved_search = search_history_service.use_saved_search(current_user.id, saved_search_id)
+        if not saved_search:
+            raise HTTPException(status_code=404, detail="Saved search not found")
+        
+        # Perform the actual search
+        start_time = time.time()
+        svc = _get_search_service()
+        rows = svc.search(saved_search.query, mode=saved_search.search_mode, k=20)
+        results = [{k: row[k] for k in row.keys()} for row in rows]
+        
+        # Record this search in history
+        response_time_ms = int((time.time() - start_time) * 1000)
+        search_history_service.record_search(
+            current_user.id, saved_search.query, saved_search.search_mode, 
+            len(results), response_time_ms
+        )
+        
+        return {
+            "success": True,
+            "saved_search": {
+                "id": saved_search.id,
+                "name": saved_search.name,
+                "query": saved_search.query,
+                "search_mode": saved_search.search_mode,
+                "filters": saved_search.filters
+            },
+            "search_results": {
+                "results": results,
+                "total": len(results),
+                "query": saved_search.query,
+                "mode": saved_search.search_mode,
+                "response_time_ms": response_time_ms
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to use saved search: {str(e)}")
+
+
+@router.delete("/saved/{saved_search_id}")
+async def delete_saved_search(
+    saved_search_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a saved search"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        deleted = search_history_service.delete_saved_search(current_user.id, saved_search_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Saved search not found")
+        
+        return {
+            "success": True,
+            "message": "Saved search deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete saved search: {str(e)}")
+
+
+@router.post("/saved/{saved_search_id}/favorite")
+async def toggle_saved_search_favorite(
+    saved_search_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle favorite status of a saved search"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        updated = search_history_service.toggle_favorite(current_user.id, saved_search_id)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Saved search not found")
+        
+        return {
+            "success": True,
+            "message": "Favorite status toggled successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to toggle favorite: {str(e)}")
+
+
+@router.get("/analytics")
+async def get_search_analytics(
+    days: int = Query(30, description="Number of days to analyze"),
+    current_user: User = Depends(get_current_user)
+):
+    """Get search analytics for the user"""
+    if not search_history_service:
+        raise HTTPException(status_code=503, detail="Search history service not available")
+    
+    try:
+        analytics = search_history_service.get_search_analytics(current_user.id, days)
+        return {
+            "success": True,
+            "user_id": current_user.id,
+            **analytics
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get search analytics: {str(e)}")
+
+
+@router.get("/unified/analytics")
+async def unified_search_analytics(
+    fastapi_request: Request
+):
+    """Get unified search analytics"""
+    try:
+        # Get current user from session
+        current_user = None
+        if get_current_user_silent:
+            current_user = get_current_user_silent(fastapi_request)
+        
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        from services.unified_search_service import UnifiedSearchService
+        import os
+        from config import settings
+        
+        # Initialize service
+        db_path = os.getenv('SQLITE_DB', str(settings.db_path))
+        vec_path = os.getenv('SQLITE_VEC_PATH')
+        
+        unified_service = UnifiedSearchService(
+            get_conn_func=get_conn,
+            db_path=db_path,
+            vec_ext_path=vec_path
+        )
+        
+        # Get analytics
+        analytics = await unified_service.get_search_analytics(current_user.id)
+        
+        return {
+            "success": True,
+            "user_id": current_user.id,
+            **analytics
+        }
+        
+    except Exception as e:
+        print(f"Analytics error: {e}")
+        return {"success": False, "error": str(e)}

@@ -411,7 +411,7 @@ init_db()
 
 # --- Include Search Router ---
 from services.search_router import router as search_router, init_search_router
-init_search_router(get_conn, get_current_user)  # Initialize with functions
+init_search_router(get_conn, get_current_user, get_current_user_silent)  # Initialize with functions
 app.include_router(search_router)
 
 # --- Include Auth Router ---
@@ -429,6 +429,41 @@ from services.workflow_engine import WorkflowEngine
 workflow_engine = WorkflowEngine(get_conn)
 init_web_ingestion_router(get_conn, workflow_engine, get_current_user)
 app.include_router(web_router)
+
+# --- Include Apple Shortcuts Router ---
+from services.apple_shortcuts_router import router as shortcuts_router, init_apple_shortcuts_router
+init_apple_shortcuts_router(get_conn, get_current_user)
+app.include_router(shortcuts_router)
+
+# --- Include Smart Templates Router ---
+from services.smart_templates_router import router as templates_router, init_smart_templates_router
+init_smart_templates_router(get_conn, get_current_user)
+app.include_router(templates_router)
+
+# --- Include Bulk Operations Router ---
+from services.bulk_operations_router import router as bulk_router, init_bulk_operations_router
+init_bulk_operations_router(get_conn, get_current_user)
+app.include_router(bulk_router)
+
+# --- Include GitHub Integration Router ---
+from services.github_integration_router import router as github_router, init_github_integration_router
+init_github_integration_router(get_conn, get_current_user)
+app.include_router(github_router)
+
+# --- Include ArXiv Integration Router ---
+from services.arxiv_integration_router import router as arxiv_router, init_arxiv_integration_router
+init_arxiv_integration_router(get_conn, get_current_user)
+app.include_router(arxiv_router)
+
+# --- Include Mobile Capture Router ---
+from services.mobile_capture_router import router as mobile_router, init_mobile_capture_router
+init_mobile_capture_router(get_conn, get_current_user)
+app.include_router(mobile_router)
+
+# --- Include Unified Search Router ---
+from services.search_router import router as search_router, init_search_router
+init_search_router(get_conn, get_current_user, get_current_user_silent)
+app.include_router(search_router)
 
 # --- Simple FIFO job worker for note processing ---
 import asyncio
@@ -948,6 +983,18 @@ def _check_queue_health():
     
     return queue_info
 
+# PWA Offline Page
+@app.get("/offline")
+def offline_page(request: Request):
+    """Offline page for PWA functionality"""
+    return render_page(request, "offline.html", {})
+
+# Mobile Capture Interface
+@app.get("/capture/mobile")
+def mobile_capture_page(request: Request):
+    """Mobile-optimized capture interface"""
+    return render_page(request, "mobile_capture.html", {})
+
 # Main endpoints (keep existing)
 @app.get("/")
 def dashboard(
@@ -1306,6 +1353,51 @@ async def get_batch_status(current_user: User = Depends(get_current_user)):
     """Get batch processing status and configuration"""
     return audio_queue.get_batch_status()
 
+
+# Public health check endpoints (no authentication required)
+@app.get("/api/audio-queue/health")
+async def audio_queue_health():
+    """Public health check for audio queue system"""
+    try:
+        # Get basic system status without user-specific data
+        total_pending = audio_queue.conn.execute("SELECT COUNT(*) FROM audio_processing_queue WHERE status = 'pending'").fetchone()[0]
+        total_processing = audio_queue.conn.execute("SELECT COUNT(*) FROM audio_processing_queue WHERE status = 'processing'").fetchone()[0]
+        
+        return {
+            "status": "healthy",
+            "service": "audio-queue",
+            "queue_status": {
+                "pending": total_pending,
+                "processing": total_processing
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy", 
+            "service": "audio-queue",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/api/batch/health")  
+async def batch_health():
+    """Public health check for batch processing system"""
+    try:
+        batch_status = audio_queue.get_batch_status()
+        return {
+            "status": "healthy",
+            "service": "batch-processing", 
+            "batch_enabled": batch_status.get("batch_enabled", False),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "service": "batch-processing",
+            "error": str(e), 
+            "timestamp": datetime.now().isoformat()
+        }
 
 @app.post("/api/batch/process-now")
 async def process_batch_now(current_user: User = Depends(get_current_user)):
