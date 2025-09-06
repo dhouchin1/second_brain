@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS Test for React Frontend</title>
+</head>
+<body>
+    <h1>🧪 CORS Test for Second Brain API</h1>
+    
+    <div id="status"></div>
+    <button onclick="testAPI()">Test API Connection</button>
+    <div id="results"></div>
+
+    <script>
+        async function testAPI() {
+            const statusEl = document.getElementById('status');
+            const resultsEl = document.getElementById('results');
+            
+            statusEl.innerHTML = '🔄 Testing API connection...';
+            resultsEl.innerHTML = '';
+            
+            try {
+                // Test basic API endpoint
+                const response = await fetch('http://localhost:8082/', {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    statusEl.innerHTML = '✅ CORS working! API accessible from different origin.';
+                    
+                    // Check security headers
+                    const headers = Array.from(response.headers.entries());
+                    const securityHeaders = headers.filter(([key]) => 
+                        key.toLowerCase().startsWith('x-') || 
+                        key.toLowerCase().includes('content-security') ||
+                        key.toLowerCase().includes('referrer')
+                    );
+                    
+                    resultsEl.innerHTML = `
+                        <h3>✅ Response Status: ${response.status}</h3>
+                        <h3>🔐 Security Headers:</h3>
+                        <ul>
+                            ${securityHeaders.map(([key, value]) => 
+                                `<li><strong>${key}:</strong> ${value}</li>`
+                            ).join('')}
+                        </ul>
+                    `;
+                } else {
+                    statusEl.innerHTML = `❌ API responded with status ${response.status}`;
+                    resultsEl.innerHTML = await response.text();
+                }
+            } catch (error) {
+                statusEl.innerHTML = '❌ CORS Error: ' + error.message;
+                resultsEl.innerHTML = `
+                    <p>This could mean:</p>
+                    <ul>
+                        <li>Server is not running on http://localhost:8082</li>
+                        <li>CORS is not properly configured</li>
+                        <li>Network connectivity issue</li>
+                    </ul>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
