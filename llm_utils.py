@@ -1,6 +1,9 @@
 import requests
 import json
+import logging
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 def _ollama_options_dict():
     """Build an options dict for Ollama from settings, skipping Nones.
@@ -21,9 +24,30 @@ def _ollama_options_dict():
     return opts
 
 
+def _check_ai_processing_allowed():
+    """Check if AI processing is allowed based on local-first configuration."""
+    if not settings.ai_processing_enabled:
+        logger.warning("AI processing disabled via ai_processing_enabled=False")
+        return False
+    
+    # Check if external AI is being used when not allowed
+    if hasattr(settings, 'ai_allow_external') and not settings.ai_allow_external:
+        # Ollama on localhost is considered local
+        ollama_url = getattr(settings, 'ollama_api_url', 'http://localhost:11434/api/generate')
+        if not (ollama_url.startswith('http://localhost:') or ollama_url.startswith('http://127.0.0.1:')):
+            logger.warning(f"External Ollama URL '{ollama_url}' not allowed (ai_allow_external=False)")
+            return False
+    
+    return True
+
 def ollama_summarize(text, prompt=None):
-    """Return summary, tags and actions extracted from *text* using Ollama."""
-    print(f"[ollama_summarize] Called with text: {repr(text[:200])}")
+    """Return summary, tags and actions extracted from *text* using local Ollama."""
+    logger.info(f"[ollama_summarize] Called with text: {repr(text[:200])}")
+    
+    if not _check_ai_processing_allowed():
+        logger.warning("AI processing not allowed, returning empty results")
+        return {"summary": "", "tags": [], "actions": []}
+    
     if not text or not text.strip():
         return {"summary": "", "tags": [], "actions": []}
 
@@ -73,8 +97,14 @@ def ollama_summarize(text, prompt=None):
 
 
 def ollama_generate_title(text):
+    """Generate title using local Ollama."""
+    if not _check_ai_processing_allowed():
+        logger.warning("AI processing not allowed, returning default title")
+        return "Untitled Note"
+        
     if not text or not text.strip():
         return "Untitled Note"
+        
     prompt = (
         "Generate a concise, descriptive title (max 10 words) for the following note or meeting transcript. "
         "Avoid generic phrases like 'Meeting Transcript' or 'Recording.' "

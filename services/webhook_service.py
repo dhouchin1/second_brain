@@ -95,14 +95,15 @@ class WebhookService:
             c.execute(
                 """
                 INSERT INTO notes (
-                    title, content, summary, tags, actions, type, timestamp,
+                    title, body, content, summary, tags, actions, type, timestamp,
                     audio_filename, file_filename, file_type, file_mime_type, 
                     file_size, extracted_text, file_metadata, status, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "Incoming Audio",  # Will be updated after processing
                     "",  # Will be filled with transcript
+                    "",
                     "",
                     tags,
                     "",
@@ -122,14 +123,7 @@ class WebhookService:
             
             note_id = c.lastrowid
             
-            # Add to FTS for immediate searchability (even before transcription)
-            c.execute(
-                """
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (note_id, "Incoming Audio", "", tags, "", "", ""),
-            )
+            # FTS triggers handle indexing; no manual insert
             
             conn.commit()
             conn.close()
@@ -198,9 +192,10 @@ class WebhookService:
         
         # Save note
         c.execute(
-            "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 data.note[:60] + "..." if len(data.note) > 60 else data.note,
+                data.note,
                 data.note,
                 summary,
                 tags,
@@ -212,13 +207,6 @@ class WebhookService:
         )
         conn.commit()
         note_id = c.lastrowid
-        
-        # Update FTS
-        c.execute(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-            (note_id, data.note[:60], summary, tags, "\n".join(ai_actions), data.note),
-        )
-        conn.commit()
         conn.close()
         
         return {"status": "ok", "note_id": note_id}
@@ -246,9 +234,10 @@ class WebhookService:
         c = conn.cursor()
         
         c.execute(
-            "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note[:60] + "..." if len(note) > 60 else note,
+                note,
                 note,
                 summary,
                 final_tags,
@@ -260,12 +249,6 @@ class WebhookService:
         )
         conn.commit()
         note_id = c.lastrowid
-        
-        c.execute(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-            (note_id, note[:60] + "..." if len(note) > 60 else note, summary, final_tags, actions, note),
-        )
-        conn.commit()
         conn.close()
         
         return {"status": "ok", "note_id": note_id}
@@ -368,13 +351,14 @@ class WebhookService:
             
             c.execute("""
                 INSERT INTO notes (
-                    user_id, title, content, tags, type, timestamp, 
+                    user_id, title, body, content, tags, type, timestamp, 
                     file_filename, file_type, file_mime_type, file_size,
                     processing_status, source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 user_id,
                 file.filename or f"Discord Upload {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                final_content,
                 final_content,
                 tags,
                 file_note_type,
@@ -513,7 +497,7 @@ Attendees: {', '.join(data.attendees)}
         c = conn.cursor()
         
         c.execute(
-            "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note[:60] + "..." if len(note) > 60 else note,
                 note,
@@ -524,13 +508,6 @@ Attendees: {', '.join(data.attendees)}
                 now,
                 user_id,
             ),
-        )
-        conn.commit()
-        note_id = c.lastrowid
-        
-        c.execute(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-            (note_id, note[:60] + "..." if len(note) > 60 else note, summary, final_tags, actions, note),
         )
         conn.commit()
         conn.close()
@@ -569,9 +546,10 @@ Attendees: {', '.join(data.attendees)}
         c = conn.cursor()
         
         c.execute(
-            "INSERT INTO notes (title, content, summary, tags, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO notes (title, body, content, summary, tags, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                title or formatted_content[:60] + "..." if len(formatted_content) > 60 else formatted_content,
+                title or (formatted_content[:60] + "..." if len(formatted_content) > 60 else formatted_content),
+                formatted_content,
                 formatted_content,
                 summary,
                 final_tags,
@@ -579,13 +557,6 @@ Attendees: {', '.join(data.attendees)}
                 now,
                 user_id,
             ),
-        )
-        conn.commit()
-        note_id = c.lastrowid
-        
-        c.execute(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-            (note_id, title or formatted_content[:60], summary, final_tags, "", formatted_content),
         )
         conn.commit()
         conn.close()

@@ -203,13 +203,14 @@ class UploadService:
             c.execute(
                 """
                 INSERT INTO notes (
-                    title, content, summary, tags, actions, type, timestamp,
+                    title, body, content, summary, tags, actions, type, timestamp,
                     audio_filename, file_filename, file_type, file_mime_type,
                     file_size, extracted_text, file_metadata, status, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     title,
+                    content,
                     content,
                     "",
                     tags,
@@ -228,13 +229,7 @@ class UploadService:
                 ),
             )
             note_id = c.lastrowid
-            c.execute(
-                """
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (note_id, title, "", tags, "", content, extracted_text),
-            )
+            # FTS triggers keep the index in sync; no manual insert needed
             conn.commit()
         except Exception as e:
             conn.rollback()

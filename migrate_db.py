@@ -71,17 +71,19 @@ class MigrationRunner:
             with open(file_path, 'r') as f:
                 sql_content = f.read()
             
+            # Preprocess: strip non-SQL comment lines starting with '#'
+            lines = []
+            for line in sql_content.splitlines():
+                if line.lstrip().startswith('#'):
+                    continue
+                lines.append(line)
+            sql_content = "\n".join(lines)
+            
             checksum = self._calculate_checksum(sql_content)
             
-            # Apply migration
+            # Apply migration using executescript to properly handle triggers and multi-statement blocks
             conn = sqlite3.connect(self.db_path)
-            
-            # Split on semicolons and execute each statement
-            statements = [stmt.strip() for stmt in sql_content.split(';') if stmt.strip()]
-            
-            for statement in statements:
-                if statement:
-                    conn.execute(statement)
+            conn.executescript(sql_content)
             
             # Record migration as applied
             conn.execute(
@@ -95,6 +97,18 @@ class MigrationRunner:
             logger.info(f"✅ Successfully applied: {migration_name}")
             return True
             
+        except sqlite3.OperationalError as e:
+            # Allow optional vector migration to fail without stopping the chain
+            if 'vec' in migration_name or 'USING vec0' in sql_content:
+                logger.warning(f"⚠️ Optional vector migration '{migration_name}' skipped: {e}")
+                try:
+                    conn.rollback()
+                    conn.close()
+                except Exception:
+                    pass
+                return True
+            logger.error(f"❌ Failed to apply migration {migration_name}: {e}")
+            return False
         except Exception as e:
             logger.error(f"❌ Failed to apply migration {migration_name}: {e}")
             return False

@@ -151,6 +151,52 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices('smtp_use_tls', 'SMTP_USE_TLS')
     )
 
+    # === LOCAL-FIRST AI CONFIGURATION ===
+    # Master switch: when False, ALL external AI services are disabled
+    # When True, allows fallback to external AI when local models fail
+    ai_allow_external: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('ai_allow_external', 'AI_ALLOW_EXTERNAL')
+    )
+    
+    # Local AI preferences (used when ai_allow_external=True for fallbacks)
+    ai_prefer_local: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('ai_prefer_local', 'AI_PREFER_LOCAL')
+    )
+    
+    # Embedding provider priority: local models first, external as fallback
+    ai_embeddings_provider_priority: str = Field(
+        default="sentence_transformers,ollama,openai",
+        validation_alias=AliasChoices('ai_embeddings_provider_priority', 'AI_EMBEDDINGS_PROVIDER_PRIORITY')
+    )
+    
+    # LLM provider priority: local models first, external as fallback  
+    ai_llm_provider_priority: str = Field(
+        default="ollama,openai,anthropic",
+        validation_alias=AliasChoices('ai_llm_provider_priority', 'AI_LLM_PROVIDER_PRIORITY')
+    )
+    
+    @property
+    def embeddings_providers(self) -> list[str]:
+        """Get embedding providers as list."""
+        return [p.strip() for p in self.ai_embeddings_provider_priority.split(',') if p.strip()]
+    
+    @property  
+    def llm_providers(self) -> list[str]:
+        """Get LLM providers as list."""
+        return [p.strip() for p in self.ai_llm_provider_priority.split(',') if p.strip()]
+    
+    # External AI API keys (only used when ai_allow_external=True)
+    openai_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('openai_api_key', 'OPENAI_API_KEY')
+    )
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices('anthropic_api_key', 'ANTHROPIC_API_KEY')
+    )
+
     # Auto-seeding Configuration
     auto_seeding_enabled: bool = Field(
         default=True,
@@ -165,7 +211,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices('auto_seeding_embeddings', 'AUTO_SEEDING_EMBEDDINGS')
     )
     auto_seeding_embed_model: str = Field(
-        default="nomic-embed-text",
+        default="all-MiniLM-L6-v2",  # Updated to use local sentence-transformers
         validation_alias=AliasChoices('auto_seeding_embed_model', 'AUTO_SEEDING_EMBED_MODEL')
     )
     auto_seeding_skip_if_content: bool = Field(
@@ -175,6 +221,23 @@ class Settings(BaseSettings):
     auto_seeding_min_notes: int = Field(
         default=5,
         validation_alias=AliasChoices('auto_seeding_min_notes', 'AUTO_SEEDING_MIN_NOTES')
+    )
+
+    # Auto-seeding: refresh FTS index after seeding (best-effort)
+    auto_seeding_refresh_indices: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('auto_seeding_refresh_indices', 'AUTO_SEEDING_REFRESH_INDICES')
+    )
+
+    # Capture deduplication (prevent duplicate notes based on content hash)
+    capture_dedup_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('capture_dedup_enabled', 'CAPTURE_DEDUP_ENABLED')
+    )
+    # If > 0, consider duplicates only within this window (days). 0 = no window.
+    capture_dedup_window_days: int = Field(
+        default=30,
+        validation_alias=AliasChoices('capture_dedup_window_days', 'CAPTURE_DEDUP_WINDOW_DAYS')
     )
 
     model_config = SettingsConfigDict(

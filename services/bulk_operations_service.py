@@ -179,6 +179,9 @@ class BulkOperationsService:
                     update_values.append(updates["title"])
                 
                 if "content" in updates:
+                    # Keep body and content in sync during transition
+                    update_fields.append("body = ?")
+                    update_values.append(updates["content"])
                     update_fields.append("content = ?")
                     update_values.append(updates["content"])
                 
@@ -306,7 +309,7 @@ class BulkOperationsService:
             # Get notes data
             placeholders = ",".join("?" * len(note_ids))
             cursor.execute(f"""
-                SELECT id, title, content, summary, tags, created_at, updated_at, file_type
+                SELECT id, title, COALESCE(body, content) as content, summary, tags, created_at, updated_at, file_type
                 FROM notes 
                 WHERE id IN ({placeholders}) AND user_id = ?
                 ORDER BY created_at DESC

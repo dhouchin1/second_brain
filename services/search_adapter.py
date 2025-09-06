@@ -39,11 +39,31 @@ class SearchService:
         self.conn.execute('PRAGMA foreign_keys=ON;')
         try:
             self.conn.enable_load_extension(True)
-            if self.vec_ext_path:
-                self.conn.load_extension(self.vec_ext_path)
+            path = self.vec_ext_path
+            # Treat placeholder paths as unset
+            if path and path.startswith('/absolute/path/to/'):
+                path = None
+            # Try env path first
+            load_ok = False
+            if path:
+                try:
+                    self.conn.load_extension(path)
+                    load_ok = True
+                except Exception as e:
+                    print(f"[search] sqlite-vec load failed for {path}: {e}")
+            # Fallback: auto-detect from package
+            if not load_ok:
+                try:
+                    import sqlite_vec  # type: ignore
+                    auto_path = getattr(sqlite_vec, 'loadable_path', lambda: None)()
+                    if auto_path:
+                        self.conn.load_extension(auto_path)
+                        load_ok = True
+                except Exception as e:
+                    print(f"[search] sqlite-vec auto-detect load failed: {e}")
         except Exception as e:
             # Extension loading is optional; log and continue
-            print(f"[search] sqlite-vec not loaded: {e}")
+            print(f"[search] sqlite-vec not enabled: {e}")
 
     def _run_migrations(self):
         cur = self.conn.cursor()
@@ -51,11 +71,13 @@ class SearchService:
             if not path.exists():
                 continue
             sql = path.read_text(encoding='utf-8')
+            # Strip shell-style comment lines to avoid tokenizer issues
+            lines = [ln for ln in sql.splitlines() if not ln.lstrip().startswith('#')]
+            sql = "\n".join(lines)
             try:
                 cur.executescript(sql)
                 self.conn.commit()
             except sqlite3.OperationalError as e:
-                # vec migration may fail if extension not loaded; ignore
                 print(f"[search] migration {path.name} skipped/error: {e}")
                 self.conn.rollback()
 
@@ -180,7 +202,7 @@ class SearchService:
             """
             WITH vs AS (
               SELECT note_id AS id,
-                     1.0 - vec_cosine_distance(embedding, ?) AS vs_rank
+                     1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
               FROM note_vecs
               ORDER BY vs_rank DESC
               LIMIT ?
@@ -213,7 +235,7 @@ class SearchService:
               LIMIT 50
             ),
             vs AS (
-              SELECT note_id AS id, 1.0 - vec_cosine_distance(embedding, ?) AS vs_rank
+              SELECT note_id AS id, 1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
               FROM note_vecs
               ORDER BY vs_rank DESC
               LIMIT 50

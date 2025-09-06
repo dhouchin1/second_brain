@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS saved_searches (
 );
 
 -- Search analytics table for insights
-CREATE TABLE IF NOT EXISTS search_analytics (
+CREATE TABLE IF NOT EXISTS search_analytics_daily (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     date DATE NOT NULL,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS search_analytics (
 CREATE INDEX IF NOT EXISTS idx_search_history_user_created ON search_history(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_search_history_query ON search_history(query);
 CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON saved_searches(user_id, is_favorite DESC, last_used_at DESC);
-CREATE INDEX IF NOT EXISTS idx_search_analytics_user_date ON search_analytics(user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_search_analytics_daily_user_date ON search_analytics_daily(user_id, date DESC);
 
 -- Triggers to auto-update timestamps
 CREATE TRIGGER IF NOT EXISTS update_saved_searches_timestamp 

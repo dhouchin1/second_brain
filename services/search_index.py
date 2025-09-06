@@ -23,7 +23,7 @@ class SearchConfig:
     def __init__(
         self,
         db_path: Path,
-        embed_model: str = "nomic-embed-text",
+        embed_model: str = "all-MiniLM-L6-v2",
         enable_embeddings: bool = True,
         ollama_url: str = "http://localhost:11434"
     ):
@@ -86,7 +86,7 @@ class SearchIndexer:
         self.conn.commit()
         logger.info("FTS5 tables ensured")
     
-    def ensure_vec(self, dim: int = 768) -> bool:
+    def ensure_vec(self, dim: int = 384) -> bool:
         """Returns True if vec0 usable."""
         if self._vec_available is not None:
             return self._vec_available
@@ -595,28 +595,37 @@ class SearchIndexer:
             return f'"{q}"'
     
     def _generate_embedding(self, text: str, model: str) -> Optional[List[float]]:
-        """Generate embedding using Ollama API."""
+        """Generate embedding using SentenceTransformers or Ollama fallback."""
         try:
-            data = json.dumps({"model": model, "input": text}).encode('utf-8')
-            req = urllib.request.Request(
-                f"{self.cfg.ollama_url}/api/embeddings",
-                data=data,
-                headers={'Content-Type': 'application/json'}
-            )
-            
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                payload = json.loads(resp.read().decode('utf-8'))
-            
-            embedding = payload.get('embedding') or payload.get('data', [{}])[0].get('embedding')
-            if not embedding:
-                logger.warning("No embedding returned from Ollama")
-                return None
-            
-            return embedding
+            # Use the updated embeddings service
+            from services.embeddings import Embeddings
+            embedder = Embeddings()
+            return embedder.embed(text)
             
         except Exception as e:
-            logger.warning(f"Failed to generate embedding: {e}")
-            return None
+            logger.warning(f"Failed to generate embedding with SentenceTransformers, trying Ollama: {e}")
+            # Fallback to Ollama
+            try:
+                data = json.dumps({"model": model, "input": text}).encode('utf-8')
+                req = urllib.request.Request(
+                    f"{self.cfg.ollama_url}/api/embeddings",
+                    data=data,
+                    headers={'Content-Type': 'application/json'}
+                )
+                
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    payload = json.loads(resp.read().decode('utf-8'))
+                
+                embedding = payload.get('embedding') or payload.get('data', [{}])[0].get('embedding')
+                if not embedding:
+                    logger.warning("No embedding returned from Ollama")
+                    return None
+                
+                return embedding
+                
+            except Exception as ollama_error:
+                logger.warning(f"Failed to generate embedding with Ollama: {ollama_error}")
+                return None
     
     def _store_vec_embedding(self, chunk_id: str, model: str, embedding: List[float]) -> None:
         """Store embedding using sqlite-vec."""

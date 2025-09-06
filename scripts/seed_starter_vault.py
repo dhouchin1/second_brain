@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import uuid
 
-# Optional: for local Ollama embeddings
+# Optional: for local Ollama embeddings (kept for dependency test helper only)
 try:
     import requests  # type: ignore
 except Exception:
@@ -131,7 +131,7 @@ def chunk_markdown(md_text: str, max_chars: int = 1200) -> List[Tuple[str, str]]
     return parts
 
 
-# ---------- Embeddings via Ollama --------------------------------------------
+# ---------- Embeddings helpers -----------------------------------------------
 
 def try_ollama_embed(texts: List[str], model: str = "nomic-embed-text", url: str = "http://localhost:11434", timeout: int = 20) -> Optional[List[List[float]]]:
     if not requests:
@@ -148,6 +148,18 @@ def try_ollama_embed(texts: List[str], model: str = "nomic-embed-text", url: str
         log.warning("Embeddings skipped: %s", e)
         return None
     return None
+ 
+def embed_texts_local_first(texts: List[str], model: str) -> Optional[List[List[float]]]:
+    """Use central Embeddings service (local-first) to embed a list of texts."""
+    try:
+        # Import here to avoid hard dependency when running minimal checks
+        sys.path.append(str(Path(__file__).parent.parent))
+        from services.embeddings import Embeddings  # type: ignore
+        embedder = Embeddings(model=model)
+        return [embedder.embed(t) for t in texts]
+    except Exception as e:
+        log.warning("Local-first embedding failed: %s", e)
+        return None
 
 
 # ---------- DB: schema + upsert helpers (adapted for Second Brain) -----------
@@ -159,13 +171,15 @@ def db_conn(db_path: Path) -> sqlite3.Connection:
     return con
 
 def ensure_embeddings_schema(con: sqlite3.Connection) -> bool:
-    """Ensure embeddings tables exist if not already present. Returns True if vec extension available."""
+    """Ensure embeddings tables exist if not already present.
+    Returns True if sqlite-vec note_vecs is available (aligned with SearchService).
+    """
     try:
-        # Check if embeddings table exists from migration 002
+        # Ensure JSON fallback table exists
         row = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'").fetchone()
         if not row:
-            # Create basic embeddings table if migration 002 hasn't run
-            con.execute("""
+            con.execute(
+                """
                 CREATE TABLE IF NOT EXISTS embeddings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     note_id INTEGER NOT NULL,
@@ -175,40 +189,34 @@ def ensure_embeddings_schema(con: sqlite3.Connection) -> bool:
                     FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
                     UNIQUE(note_id, model)
                 )
-            """)
-        
-        # Try to detect sqlite-vec extension
-        has_vec = False
-        try:
-            con.execute("SELECT count(*) FROM vec_notes_fts LIMIT 1;")
-            has_vec = True
-        except:
-            # Try to create vec table if sqlite-vec is available
-            try:
-                con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS vec_notes_fts USING vec0(embedding FLOAT[768]);")
-                has_vec = True
-            except Exception as e:
-                log.info("sqlite-vec unavailable, using JSON fallback: %s", e)
-                has_vec = False
-        
+                """
+            )
+
+        # Detect vec0-based note_vecs table (created by migrations/002_vec.sql)
+        vec_tbl = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='note_vecs'"
+        ).fetchone()
+        has_vec = bool(vec_tbl)
+
         con.commit()
         return has_vec
-        
+
     except Exception as e:
         log.warning("Embeddings schema setup failed: %s", e)
         return False
 
-def upsert_note(con: sqlite3.Connection, note: Dict, user_id: int = 1) -> int:
+def upsert_note(con: sqlite3.Connection, note: Dict, user_id: int | None = None) -> int:
     """Upsert note using existing Second Brain schema."""
     cursor = con.execute("""
         INSERT INTO notes (
-            title, content, summary, tags, actions, type, 
+            title, body, content, summary, tags, actions, type, 
             timestamp, audio_filename, status, user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id
     """, (
         note["title"],
-        note["content"], 
+        note.get("content", ""), 
+        note.get("content", ""),
         note.get("summary", ""),
         note.get("tags", ""),
         note.get("actions", ""),
@@ -223,24 +231,32 @@ def upsert_note(con: sqlite3.Connection, note: Dict, user_id: int = 1) -> int:
     return result[0] if result else None
 
 def upsert_embeddings(con: sqlite3.Connection, note_id: int, vectors: List[float], model: str, has_vec: bool = False) -> None:
-    """Store embeddings using available method."""
+    """Store embeddings using available method.
+    If vec is available and note_vecs exists, write to note_vecs to align with SearchService.
+    Otherwise, fall back to JSON embeddings table.
+    """
     if has_vec:
         try:
-            # Try sqlite-vec first
-            con.execute("INSERT INTO vec_notes_fts(embedding) VALUES (?)", (json.dumps(vectors),))
-            log.debug("Stored vec embedding for note %s", note_id)
+            con.execute(
+                "INSERT OR REPLACE INTO note_vecs(note_id, embedding) VALUES (?, ?)",
+                (note_id, json.dumps(vectors)),
+            )
+            log.debug("Stored vec embedding for note %s in note_vecs", note_id)
             return
         except Exception as e:
-            log.debug("Vec storage failed, falling back to JSON: %s", e)
-    
-    # Fallback to embeddings table
-    con.execute("""
+            log.debug("Vec storage failed (note_vecs), falling back to JSON: %s", e)
+
+    # Fallback to embeddings table (JSON)
+    con.execute(
+        """
         INSERT INTO embeddings (note_id, model, embedding_vector, created_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(note_id, model) DO UPDATE SET
             embedding_vector = excluded.embedding_vector,
             created_at = excluded.created_at
-    """, (note_id, model, json.dumps(vectors), now_iso()))
+        """,
+        (note_id, model, json.dumps(vectors), now_iso()),
+    )
 
 
 # ---------- Synthetic-but-realistic seed content ------------------------------
@@ -470,18 +486,19 @@ SEED_BOOKMARKS = [
 
 # ---------- Markdown writer ---------------------------------------------------
 
-def write_markdown(base_dir: Path, meta: Dict, body: str, overwrite: bool) -> Path:
+def write_markdown(base_dir: Path, meta: Dict, body: str, overwrite: bool) -> tuple[Path, bool]:
     """
     Writes file under {vault}/{namespace}/{category}/{id}.md to keep samples organized.
+    Returns (path, wrote_file) where wrote_file indicates a write occurred (created or overwritten).
     """
     category = meta.get("type", "misc")
     out_dir = base_dir / category
     ensure_dir(out_dir)
     path = out_dir / f"{meta['id']}.md"
     if path.exists() and not overwrite:
-        return path
+        return path, False
     path.write_text(to_yaml_front_matter(meta, body), encoding="utf-8")
-    return path
+    return path, True
 
 
 # ---------- Seeding pipeline --------------------------------------------------
@@ -496,6 +513,7 @@ class SeedCfg:
     embed_model: str = "nomic-embed-text"
     ollama_url: str = "http://localhost:11434"
     vec_dim: int = 768
+    user_id: int | None = None
 
 def validate_seed_data() -> List[str]:
     """Validate seed data for quality and consistency."""
@@ -578,30 +596,58 @@ def seed_active_vault(cfg: SeedCfg) -> None:
     try:
         has_vec = ensure_embeddings_schema(con)
         
-        # Get default user (assume ID 1 exists)
-        user_id = 1
+        # Choose user for seeded notes; allow NULL if not provided
+        user_id = cfg.user_id
         
         # Process notes
         note_ids = []
         for note_data in SEED_NOTES:
+            # Build augmented tags with seed markers
+            db_tags = note_data["tags"]
+            if db_tags:
+                db_tags = f"{db_tags}, seed, ns:{cfg.namespace}"
+            else:
+                db_tags = f"seed, ns:{cfg.namespace}"
+
             # Create markdown file
             meta = {
                 "id": note_data["id"],
                 "type": note_data["type"], 
-                "tags": note_data["tags"].split(", "),
+                "tags": db_tags.split(", "),
                 "created_at": now_iso(),
                 "updated_at": now_iso(),
                 "title": note_data["title"],
                 "summary": note_data["summary"]
             }
-            write_markdown(ns_root, meta, note_data["content"], overwrite=cfg.force)
-            
+            # Add hidden seed marker to content for robust detection
+            content_with_marker = f"<!-- seed:{meta['id']} ns:{cfg.namespace} -->\n{note_data['content']}"
+            _, wrote_file = write_markdown(ns_root, meta, content_with_marker, overwrite=cfg.force)
+
+            # If not overwriting and file already existed, skip DB insert for idempotency
+            if not wrote_file and not cfg.force:
+                continue
+
+            # If force overwrite, remove prior seeded duplicates for this title/namespace
+            if cfg.force:
+                try:
+                    con.execute(
+                        """
+                        DELETE FROM notes
+                        WHERE title = ?
+                          AND (tags LIKE '%seed%' OR tags LIKE ?)
+                          AND ( (? IS NULL AND user_id IS NULL) OR user_id = ? )
+                        """,
+                        (note_data["title"], f"%ns:{cfg.namespace}%", cfg.user_id, cfg.user_id),
+                    )
+                except Exception:
+                    pass
+
             # Insert into database
             note_id = upsert_note(con, {
                 "title": note_data["title"],
                 "content": note_data["content"],
                 "summary": note_data["summary"],
-                "tags": note_data["tags"],
+                "tags": db_tags,
                 "type": note_data["type"],
                 "status": "completed",
                 "timestamp": now_iso(),
@@ -614,23 +660,50 @@ def seed_active_vault(cfg: SeedCfg) -> None:
         
         # Process bookmarks
         for bookmark_data in SEED_BOOKMARKS:
+            # Build augmented tags with seed markers
+            db_tags = bookmark_data["tags"]
+            if db_tags:
+                db_tags = f"{db_tags}, seed, ns:{cfg.namespace}"
+            else:
+                db_tags = f"seed, ns:{cfg.namespace}"
+
             meta = {
                 "id": bookmark_data["id"],
                 "type": bookmark_data["type"],
-                "tags": bookmark_data["tags"].split(", "),
+                "tags": db_tags.split(", "),
                 "url": bookmark_data["url"],
                 "created_at": now_iso(),
                 "updated_at": now_iso(),
                 "title": bookmark_data["title"],
                 "summary": bookmark_data["summary"]
             }
-            write_markdown(ns_root, meta, bookmark_data["content"], overwrite=cfg.force)
-            
+            content_with_marker = f"<!-- seed:{meta['id']} ns:{cfg.namespace} -->\n{bookmark_data['content']}"
+            _, wrote_file = write_markdown(ns_root, meta, content_with_marker, overwrite=cfg.force)
+
+            # If not overwriting and file already existed, skip DB insert for idempotency
+            if not wrote_file and not cfg.force:
+                continue
+
+            # If force overwrite, remove prior seeded duplicates for this title/namespace
+            if cfg.force:
+                try:
+                    con.execute(
+                        """
+                        DELETE FROM notes
+                        WHERE title = ?
+                          AND (tags LIKE '%seed%' OR tags LIKE ?)
+                          AND ( (? IS NULL AND user_id IS NULL) OR user_id = ? )
+                        """,
+                        (bookmark_data["title"], f"%ns:{cfg.namespace}%", cfg.user_id, cfg.user_id),
+                    )
+                except Exception:
+                    pass
+
             note_id = upsert_note(con, {
                 "title": bookmark_data["title"],
                 "content": bookmark_data["content"],
                 "summary": bookmark_data["summary"],
-                "tags": bookmark_data["tags"],
+                "tags": db_tags,
                 "type": bookmark_data["type"],
                 "status": "completed",
                 "timestamp": now_iso(),
@@ -647,15 +720,19 @@ def seed_active_vault(cfg: SeedCfg) -> None:
         if not cfg.no_embed and note_ids:
             log.info("Generating embeddings for %d notes...", len(note_ids))
             texts = [content for _, content in note_ids]
-            vectors = try_ollama_embed(texts, model=cfg.embed_model, url=cfg.ollama_url)
-            
+
+            # Prefer local-first embeddings service; fall back to direct Ollama probe
+            vectors = embed_texts_local_first(texts, model=cfg.embed_model)
+            if vectors is None:
+                vectors = try_ollama_embed(texts, model=cfg.embed_model, url=cfg.ollama_url)
+
             if vectors:
                 for (note_id, _), vector in zip(note_ids, vectors):
                     upsert_embeddings(con, note_id, vector, cfg.embed_model, has_vec)
                 con.commit()
                 log.info("✓ Stored %d embedding vectors", len(vectors))
             else:
-                log.warning("Embeddings failed - Ollama may not be running or model unavailable")
+                log.warning("Embeddings generation unavailable; skipping vector storage")
         
         log.info("✓ Seed complete. Markdown files: %s, Database records: %d", ns_root, len(note_ids))
         

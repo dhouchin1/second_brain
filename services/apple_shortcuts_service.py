@@ -108,11 +108,12 @@ class AppleShortcutsService:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("""
                 INSERT INTO notes (
-                    title, content, tags, type, timestamp, status, user_id,
+                    title, body, content, tags, type, timestamp, status, user_id,
                     source_url, web_metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
+                request.content,
                 request.content,
                 request.tags or "shortcuts,quick",
                 "text",
@@ -131,8 +132,7 @@ class AppleShortcutsService:
             
             # Add to FTS
             c.execute("""
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                -- FTS triggers keep index in sync
             """, (note_id, title, "", request.tags or "", "", request.content, request.content))
             
             conn.commit()
@@ -196,11 +196,12 @@ class AppleShortcutsService:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("""
                 INSERT INTO notes (
-                    title, content, tags, type, timestamp, status, user_id,
+                    title, body, content, tags, type, timestamp, status, user_id,
                     source_url, web_metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
+                final_content,
                 final_content,
                 request.tags or "shortcuts,voice,transcription",
                 "audio",  # Mark as audio type even though it's transcribed
@@ -224,8 +225,7 @@ class AppleShortcutsService:
             
             # Add to FTS (will be updated when transcription completes)
             c.execute("""
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                -- FTS triggers keep index in sync
             """, (note_id, title, "", request.tags or "", "", final_content, final_content))
             
             # If we have an audio file, queue it for Whisper processing
@@ -281,11 +281,12 @@ class AppleShortcutsService:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("""
                 INSERT INTO notes (
-                    title, content, tags, type, timestamp, status, user_id,
+                    title, body, content, tags, type, timestamp, status, user_id,
                     source_url, web_metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
+                enhanced_content,
                 enhanced_content,
                 request.tags or "shortcuts,web,clip",
                 "web_content",
@@ -306,8 +307,7 @@ class AppleShortcutsService:
             
             # Add to FTS
             c.execute("""
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                -- FTS triggers keep index in sync
             """, (note_id, title, "", request.tags or "", "", enhanced_content, request.content))
             
             conn.commit()
@@ -369,11 +369,12 @@ class AppleShortcutsService:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("""
                 INSERT INTO notes (
-                    title, content, tags, type, timestamp, status, user_id,
+                    title, body, content, tags, type, timestamp, status, user_id,
                     source_url, web_metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
+                meeting_content,
                 meeting_content,
                 request.tags or "shortcuts,meeting,preparation",
                 "text",
@@ -395,8 +396,7 @@ class AppleShortcutsService:
             
             # Add to FTS
             c.execute("""
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                -- FTS triggers keep index in sync
             """, (note_id, title, "", request.tags or "", "", meeting_content, meeting_content))
             
             conn.commit()
@@ -447,11 +447,12 @@ class AppleShortcutsService:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("""
                 INSERT INTO notes (
-                    title, content, tags, type, timestamp, status, user_id,
+                    title, body, content, tags, type, timestamp, status, user_id,
                     source_url, web_metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
+                daily_content,
                 daily_content,
                 request.tags or "shortcuts,daily,reflection",
                 "text",
@@ -472,8 +473,7 @@ class AppleShortcutsService:
             
             # Add to FTS
             c.execute("""
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                -- FTS triggers keep index in sync
             """, (note_id, title, "", request.tags or "", "", daily_content, daily_content))
             
             conn.commit()
@@ -518,11 +518,12 @@ class AppleShortcutsService:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             c.execute("""
                 INSERT INTO notes (
-                    title, content, tags, type, timestamp, status, user_id,
+                    title, body, content, tags, type, timestamp, status, user_id,
                     source_url, web_metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
+                content,
                 content,
                 request.tags or "shortcuts,photo,ocr,text-extraction",
                 "photo_text",
@@ -541,8 +542,7 @@ class AppleShortcutsService:
             note_id = c.lastrowid
             
             c.execute("""
-                INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                -- FTS triggers keep index in sync
             """, (note_id, title, "", request.tags or "", "", content, request.extracted_text))
             
             conn.commit()

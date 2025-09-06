@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Second Brain</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 380px;
+            min-height: 500px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            color: #1f2937;
+            background: #ffffff;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px;
+            text-align: center;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .status {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .main {
+            padding: 16px;
+        }
+
+        .capture-section {
+            margin-bottom: 20px;
+        }
+
+        .capture-section h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .capture-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .capture-grid-full {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .btn {
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #374151;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-height: 44px;
+        }
+
+        .btn:hover {
+            background: #f9fafb;
+            border-color: #9ca3af;
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+            border-color: #6b7280;
+        }
+
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
+
+        .btn-full {
+            grid-column: 1 / -1;
+        }
+
+        .btn-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-disabled:hover {
+            transform: none;
+        }
+
+        .advanced-capture {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            background: #f9fafb;
+        }
+
+        .manual-capture textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
+        .manual-capture textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .tag-input {
+            width: 100%;
+            padding: 8px 10px;
+            margin: 8px 0;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .tag-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .toggle-advanced {
+            background: none;
+            border: none;
+            color: #6b7280;
+            font-size: 12px;
+            cursor: pointer;
+            text-decoration: underline;
+            padding: 4px;
+            margin-top: 8px;
+        }
+
+        .capture-options {
+            display: flex;
+            gap: 8px;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+
+        .option-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .option-checkbox input[type="checkbox"] {
+            margin: 0;
+        }
+
+        .recent-section {
+            border-top: 1px solid #e5e7eb;
+            padding-top: 16px;
+        }
+
+        .recent-items {
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        .recent-item {
+            padding: 8px 10px;
+            margin: 4px 0;
+            background: #f9fafb;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .recent-item:hover {
+            background: #f3f4f6;
+        }
+
+        .recent-item-title {
+            font-weight: 500;
+            color: #111827;
+            margin-bottom: 2px;
+        }
+
+        .recent-item-meta {
+            color: #6b7280;
+            font-size: 11px;
+        }
+
+        .footer {
+            padding: 12px 16px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 12px;
+        }
+
+        .footer-link {
+            color: #6b7280;
+            text-decoration: none;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .footer-link:hover {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .loading {
+            text-align: center;
+            color: #6b7280;
+            padding: 20px;
+            font-size: 13px;
+        }
+
+        .error {
+            color: #dc2626;
+            background: #fef2f2;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 12px;
+        }
+
+        .success {
+            color: #059669;
+            background: #f0fdf4;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 12px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .emoji {
+            font-size: 16px;
+        }
+
+        .kbd {
+            background: #f3f4f6;
+            color: #6b7280;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-family: monospace;
+        }
+
+        .status-connected {
+            color: #10b981;
+        }
+        
+        .status-disconnected {
+            color: #ef4444;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #3b82f6;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .capture-preview {
+            max-height: 100px;
+            overflow-y: auto;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 8px;
+            margin: 8px 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        @media (max-width: 400px) {
+            body {
+                width: 320px;
+            }
+            
+            .capture-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧠 Second Brain</h1>
+        <div id="status" class="status">Checking connection...</div>
+    </div>
+
+    <div class="main">
+        <!-- Error/Success Messages -->
+        <div id="messages"></div>
+
+        <!-- Quick Capture Section -->
+        <div class="capture-section">
+            <h3><span class="emoji">⚡</span> Quick Capture</h3>
+            
+            <div class="capture-grid">
+                <button id="captureSelection" class="btn">
+                    <span class="emoji">📝</span> Selection
+                </button>
+                <button id="capturePage" class="btn">
+                    <span class="emoji">📄</span> Full Page
+                </button>
+                <button id="captureBookmark" class="btn">
+                    <span class="emoji">🔖</span> Bookmark
+                </button>
+                <button id="captureScreenshot" class="btn">
+                    <span class="emoji">📸</span> Screenshot
+                </button>
+            </div>
+        </div>
+
+        <!-- Advanced Capture Section -->
+        <div class="capture-section">
+            <h3><span class="emoji">🚀</span> Advanced Capture</h3>
+            
+            <div class="capture-grid">
+                <button id="capturePDF" class="btn">
+                    <span class="emoji">📑</span> PDF Content
+                </button>
+                <button id="captureVideo" class="btn btn-disabled">
+                    <span class="emoji">🎥</span> Video Info
+                </button>
+                <button id="captureBulkUrls" class="btn">
+                    <span class="emoji">🔗</span> Bulk URLs
+                </button>
+                <button id="captureArticle" class="btn">
+                    <span class="emoji">📰</span> Article
+                </button>
+            </div>
+            
+            <button class="toggle-advanced" id="toggleAdvanced">+ More Options</button>
+            
+            <div id="advancedOptions" class="advanced-capture hidden">
+                <div class="capture-options">
+                    <div class="option-checkbox">
+                        <input type="checkbox" id="includeImages" checked>
+                        <label for="includeImages">Include images</label>
+                    </div>
+                    <div class="option-checkbox">
+                        <input type="checkbox" id="takeScreenshot" checked>
+                        <label for="takeScreenshot">Take screenshot</label>
+                    </div>
+                    <div class="option-checkbox">
+                        <input type="checkbox" id="aiProcessing" checked>
+                        <label for="aiProcessing">AI processing</label>
+                    </div>
+                </div>
+                
+                <input type="text" id="customTags" class="tag-input" 
+                       placeholder="Custom tags (comma-separated)">
+                       
+                <div class="capture-preview" id="capturePreview" style="display: none;">
+                    <div>Preview will appear here...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual Note Section -->
+        <div class="capture-section">
+            <h3><span class="emoji">✍️</span> Manual Note</h3>
+            <div class="manual-capture">
+                <textarea 
+                    id="manualNote" 
+                    placeholder="Write your thoughts... (Ctrl+Enter to save)"
+                    rows="3"></textarea>
+                <input 
+                    type="text" 
+                    id="manualTags" 
+                    class="tag-input"
+                    placeholder="Tags (comma-separated)">
+                <button id="saveManual" class="btn btn-primary btn-full">
+                    <span class="emoji">💾</span> Save Note
+                </button>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div id="progressContainer" class="hidden">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressBar"></div>
+            </div>
+            <div id="progressText" style="font-size: 12px; color: #6b7280; text-align: center;">
+                Processing...
+            </div>
+        </div>
+
+        <!-- Recent Captures -->
+        <div class="recent-section">
+            <h3><span class="emoji">🕒</span> Recent Captures</h3>
+            <div id="recentCaptures" class="recent-items">
+                <div class="loading">Loading recent captures...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <div class="footer-links">
+            <a href="#" id="openDashboard" class="footer-link">Dashboard</a>
+            <a href="#" id="openSettings" class="footer-link">Settings</a>
+        </div>
+        <div class="footer-links">
+            <span class="kbd">Ctrl+Shift+S</span>
+        </div>
+    </div>
+
+    <script src="enhanced-popup.js"></script>
+</body>
+</html>

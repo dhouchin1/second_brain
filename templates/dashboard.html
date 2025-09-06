@@ -377,6 +377,14 @@
       <!-- Left Column: Quick Capture (8 columns) -->
       <div class="lg:col-span-8">
         
+        <!-- Enhanced Capture Button -->
+        <div class="mb-4 text-center">
+          <a href="/capture/enhanced" class="btn-base btn-accent btn-md">
+            🚀 Enhanced Capture Center
+          </a>
+          <p class="text-slate-400 text-xs mt-2">OCR, PDF processing, Apple Shortcuts, Discord integration & more</p>
+        </div>
+        
         <!-- Quick Capture Form -->
         <div class="card-surface rounded-xl p-4 shadow-xl quick-capture-form">
           <form id="quickCaptureForm" method="post" action="/capture" enctype="multipart/form-data" class="space-y-6" autocomplete="off" role="form" aria-label="Quick note capture form">
@@ -522,6 +530,20 @@
             </div>
             <div id="queueStatus" class="space-y-2">
               <div class="text-xs text-slate-400">Loading...</div>
+            </div>
+          </div>
+
+          <!-- System Diagnostics Widget -->
+          <div id="diagnosticsWidget" class="mb-3 p-3 bg-slate-800/40 rounded-lg border border-slate-700">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-xs font-medium text-slate-300">System Diagnostics</h4>
+              <div class="flex items-center gap-2">
+                <button id="reindexBtn" class="btn-base btn-ghost btn-sm">Rebuild Index</button>
+                <button id="refreshDiagnostics" class="btn-base btn-ghost btn-sm">Refresh</button>
+              </div>
+            </div>
+            <div id="diagnosticsStatus" class="grid grid-cols-2 gap-2 text-xs text-slate-300">
+              <div class="text-slate-400">Loading…</div>
             </div>
           </div>
           
@@ -1875,6 +1897,68 @@
     const refreshBtn = document.getElementById('refreshQueue');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', updateTranscriptionStatus);
+    }
+
+    // Diagnostics widget
+    async function updateDiagnostics() {
+      try {
+        const res = await fetch('/api/diagnostics/search');
+        const el = document.getElementById('diagnosticsStatus');
+        if (!el) return;
+        if (res.status === 401) {
+          el.innerHTML = '<div class="text-slate-400"><a href="/login" class="text-indigo-300 hover:underline">Login</a> to view diagnostics</div>';
+          return;
+        }
+        if (!res.ok) {
+          el.innerHTML = '<div class="text-red-300">Diagnostics unavailable</div>';
+          return;
+        }
+        const data = await res.json();
+        const ok = (b) => b ? '<span class="text-green-300">●</span>' : '<span class="text-red-300">●</span>';
+        el.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Notes</span>
+            <span class="text-slate-200">${data.notes.count}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">FTS</span>
+            <span class="text-slate-200">${ok(data.fts.exists)} ${data.fts.rows ?? '—'}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Vectors</span>
+            <span class="text-slate-200">${ok(data.vectors.exists)} ${data.vectors.rows ?? '—'}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Embeddings</span>
+            <span class="text-slate-200">${ok(data.embeddings_fallback.exists)} ${data.embeddings_fallback.rows ?? '—'}</span>
+          </div>
+        `;
+      } catch (e) {
+        const el = document.getElementById('diagnosticsStatus');
+        if (el) el.innerHTML = '<div class="text-red-300">Diagnostics error</div>';
+      }
+    }
+    updateDiagnostics();
+    const refreshDiag = document.getElementById('refreshDiagnostics');
+    if (refreshDiag) refreshDiag.addEventListener('click', updateDiagnostics);
+
+    // Reindex button
+    const reindexBtn = document.getElementById('reindexBtn');
+    if (reindexBtn) {
+      reindexBtn.addEventListener('click', async () => {
+        try {
+          reindexBtn.disabled = true;
+          reindexBtn.textContent = 'Rebuilding…';
+          const res = await fetch('/api/diagnostics/reindex?embeddings=true', { method: 'POST' });
+          // Update diagnostics after rebuild
+          await updateDiagnostics();
+          reindexBtn.textContent = res.ok ? 'Rebuilt' : 'Failed';
+        } catch (e) {
+          reindexBtn.textContent = 'Failed';
+        } finally {
+          setTimeout(() => { reindexBtn.disabled = false; reindexBtn.textContent = 'Rebuild Index'; }, 1500);
+        }
+      });
     }
   </script>
 

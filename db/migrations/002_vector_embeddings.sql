@@ -73,7 +73,7 @@ AFTER INSERT ON notes BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS notes_embedding_job_update 
-AFTER UPDATE OF content, title, summary ON notes BEGIN
+AFTER UPDATE OF body, title ON notes BEGIN
     INSERT INTO embedding_jobs (note_id, model_name)
     VALUES (new.id, 'all-MiniLM-L6-v2');
 END;

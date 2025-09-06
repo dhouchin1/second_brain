@@ -6,13 +6,20 @@ This document outlines how AI agents (like Claude Code) can effectively work wit
 
 Second Brain is a comprehensive knowledge management system that captures, processes, and makes searchable various forms of content (text, audio, web content) using AI-powered analysis and hybrid search capabilities.
 
-### Key Technologies
-- **Backend**: FastAPI, SQLite with FTS5, Ollama (LLM), Whisper.cpp (audio)
-- **API**: Modular routers in `api/routes_capture.py` and `api/routes_search.py`
-- **Service Layer**: `services/` (search adapter, embeddings, jobs)
+### Current Development Status (2025-09-05)
+**Phase:** Feature Complete MVP with Advanced Capture
+**Test Coverage:** 58/77 tests passing (75% success rate)
+**Core System:** ✅ Stable and fully tested (unified capture system)
+**Advanced Features:** ⚠️ Implemented, manual testing needed
+
+### Key Technologies (Updated)
+- **Backend**: FastAPI with service-oriented architecture, SQLite with FTS5 + sqlite-vec
+- **Core Services**: Unified Capture System, Advanced Capture (OCR/PDF/YouTube)
+- **API**: Modular service routers (`services/*_router.py`)  
+- **Service Layer**: 15+ specialized services (search, embeddings, auto-seeding, integrations)
 - **Frontend**: Vanilla JavaScript, Bootstrap, Server-Sent Events (SSE)
-- **AI/ML**: Sentence-transformers, semantic embeddings, hybrid search
-- **Integration**: Browser extension, Discord bot, Obsidian sync
+- **AI/ML**: Ollama (local LLM), Sentence-transformers, hybrid search with RRF
+- **Integration**: Enhanced Apple Shortcuts, Discord bot, Obsidian sync, auto-seeding
 
 ## Agent Interaction Patterns
 

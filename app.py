@@ -41,11 +41,16 @@ from services.upload_service import UploadService
 from services.analytics_service import AnalyticsService
 
 try:
-    from tasks_enhanced import process_note_with_status
     from realtime_status import create_status_endpoint
     REALTIME_AVAILABLE = True
 except ImportError:
     REALTIME_AVAILABLE = False
+
+# Enhanced processing is optional; fall back gracefully if unavailable
+try:
+    from tasks_enhanced import process_note_with_status  # type: ignore
+except ImportError:
+    process_note_with_status = None  # type: ignore
 from markupsafe import Markup, escape
 import re
 from config import settings
@@ -61,13 +66,13 @@ app = FastAPI()
 templates = Jinja2Templates(directory=str(settings.base_dir / "templates"))
 app.mount("/static", StaticFiles(directory=str(settings.base_dir / "static")), name="static")
 
-# Search API router will be included after auth functions are defined
-try:
-    if REALTIME_AVAILABLE:
+# Register real-time status endpoints (if module is available)
+if REALTIME_AVAILABLE:
+    try:
         create_status_endpoint(app)
-except Exception:
-    # Non-fatal if realtime endpoints cannot be registered
-    pass
+    except Exception:
+        # Non-fatal if realtime endpoints cannot be registered
+        pass
 
 @app.on_event("startup")
 def _ensure_base_directories():
@@ -185,7 +190,7 @@ def export_notes_to_obsidian(user_id: int):
     conn = get_conn()
     c = conn.cursor()
     rows = c.execute(
-        "SELECT title, content, timestamp FROM notes WHERE user_id = ?",
+        "SELECT title, COALESCE(body, content) as content, COALESCE(timestamp, created_at) as ts FROM notes WHERE user_id = ?",
         (user_id,),
     ).fetchall()
     for title, content, ts in rows:
@@ -340,13 +345,24 @@ def init_db():
         )
     ''')
     
-    # Ensure columns exist
+    # Ensure columns exist (compatibility with legacy schema)
     cols = [row[1] for row in c.execute("PRAGMA table_info(notes)")]
     if 'status' not in cols:
         c.execute("ALTER TABLE notes ADD COLUMN status TEXT DEFAULT 'complete'")
         c.execute("UPDATE notes SET status='complete' WHERE status IS NULL")
     if 'user_id' not in cols:
         c.execute("ALTER TABLE notes ADD COLUMN user_id INTEGER")
+    # Legacy content fields expected by various services/routes
+    if 'summary' not in cols:
+        c.execute("ALTER TABLE notes ADD COLUMN summary TEXT")
+    if 'content' not in cols:
+        c.execute("ALTER TABLE notes ADD COLUMN content TEXT")
+    if 'timestamp' not in cols:
+        c.execute("ALTER TABLE notes ADD COLUMN timestamp TEXT")
+    if 'type' not in cols:
+        c.execute("ALTER TABLE notes ADD COLUMN type TEXT")
+    if 'audio_filename' not in cols:
+        c.execute("ALTER TABLE notes ADD COLUMN audio_filename TEXT")
     if 'actions' not in cols:
         c.execute("ALTER TABLE notes ADD COLUMN actions TEXT")
     # New file-related columns used by capture pipeline
@@ -372,37 +388,57 @@ def init_db():
     if 'content_hash' not in cols:
         c.execute("ALTER TABLE notes ADD COLUMN content_hash TEXT")
 
-    # Update FTS if needed (ensure both actions and extracted_text columns exist)
+    # One-time backfill: align legacy fields to core schema
+    try:
+        c.execute("UPDATE notes SET body=COALESCE(content, '') WHERE (body IS NULL OR body='') AND content IS NOT NULL")
+    except Exception:
+        pass
+    try:
+        c.execute("UPDATE notes SET timestamp = COALESCE(timestamp, created_at) WHERE timestamp IS NULL")
+    except Exception:
+        pass
+
+    # Update FTS if needed: ensure FTS matches core schema: (title, body, tags)
     try:
         fts_cols = [row[1] for row in c.execute("PRAGMA table_info(notes_fts)")]
     except sqlite3.OperationalError:
         fts_cols = []
-    if ('actions' not in fts_cols) or ('extracted_text' not in fts_cols):
+    # Drop/recreate FTS if columns don't match expected core set
+    expected_fts = {"title", "body", "tags"}
+    if set(fts_cols) != expected_fts:
         c.execute("DROP TABLE IF EXISTS notes_fts")
         c.execute('''
-            CREATE VIRTUAL TABLE notes_fts USING fts5(
-                title, summary, tags, actions, content, extracted_text,
-                content='notes', content_rowid='id'
+            CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+              title, body, tags,
+              content='notes', content_rowid='id'
             )
         ''')
-        rows = c.execute("SELECT id, title, summary, tags, actions, content, extracted_text FROM notes").fetchall()
-        c.executemany(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
-
-    # Ensure notes_fts5 is populated as well (used by advanced search)
-    try:
-        count_fts5 = c.execute("SELECT count(*) FROM notes_fts5").fetchone()[0]
-    except sqlite3.OperationalError:
-        count_fts5 = 0
-    if count_fts5 == 0:
-        rows5 = c.execute("SELECT id, title, content, summary, tags, actions FROM notes").fetchall()
-        if rows5:
+        # Populate FTS from notes; prefer body, fall back to content
+        rows = c.execute(
+            "SELECT id, title, CASE WHEN COALESCE(body,'') <> '' THEN body ELSE COALESCE(content,'') END AS body, tags FROM notes"
+        ).fetchall()
+        if rows:
             c.executemany(
-                "INSERT INTO notes_fts5(rowid, title, content, summary, tags, actions) VALUES (?, ?, ?, ?, ?, ?)",
-                rows5,
+                "INSERT INTO notes_fts(rowid, title, body, tags) VALUES (?, ?, ?, ?)",
+                rows,
             )
+
+    # Ensure notes_fts5 population only if table exists (legacy advanced search)
+    try:
+        exists_fts5 = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notes_fts5'"
+        ).fetchone()
+        if exists_fts5:
+            count_fts5 = c.execute("SELECT count(*) FROM notes_fts5").fetchone()[0]
+            if count_fts5 == 0:
+                rows5 = c.execute("SELECT id, title, content, summary, tags, actions FROM notes").fetchall()
+                if rows5:
+                    c.executemany(
+                        "INSERT INTO notes_fts5(rowid, title, content, summary, tags, actions) VALUES (?, ?, ?, ?, ?, ?)",
+                        rows5,
+                    )
+    except sqlite3.OperationalError:
+        pass
     
     conn.commit()
     conn.close()
@@ -467,8 +503,11 @@ app.include_router(search_router)
 
 # --- Include Vault Seeding Router ---
 from services.vault_seeding_router import router as seeding_router, init_vault_seeding_router
+from services.diagnostics_router import router as diagnostics_router, init_diagnostics_router
 init_vault_seeding_router(get_conn, get_current_user)
+init_diagnostics_router(get_conn, get_current_user)
 app.include_router(seeding_router)
+app.include_router(diagnostics_router)
 
 # --- Include Search Benchmarking Router ---
 from services.search_benchmarking_router import router as benchmarking_router, init_search_benchmarking_router
@@ -479,6 +518,33 @@ app.include_router(benchmarking_router)
 from services.interactive_seeding_router import router as interactive_seeding_router, init_interactive_seeding_router
 init_interactive_seeding_router(get_conn)
 app.include_router(interactive_seeding_router)
+
+# ---- Advanced Capture Router ----
+from services.advanced_capture_router import router as advanced_capture_router, init_advanced_capture_router
+init_advanced_capture_router(get_conn)
+app.include_router(advanced_capture_router)
+
+# ---- Enhanced Apple Shortcuts Router ----
+from services.enhanced_apple_shortcuts_router import router as enhanced_shortcuts_router, init_enhanced_apple_shortcuts_router
+init_enhanced_apple_shortcuts_router(get_conn)
+app.include_router(enhanced_shortcuts_router)
+
+# ---- Unified Capture Router ----
+from services.unified_capture_router import router as unified_capture_router, init_unified_capture_router
+init_unified_capture_router(get_conn)
+app.include_router(unified_capture_router)
+
+# ---- Enhanced Discord Router ----
+from services.enhanced_discord_router import router as enhanced_discord_router, init_enhanced_discord_router
+init_enhanced_discord_router(get_conn)
+app.include_router(enhanced_discord_router)
+
+# ---- Demo Data Router ----
+try:
+    from services.demo_data_router import router as demo_data_router
+    app.include_router(demo_data_router)
+except ImportError:
+    print("Demo data router not available")
 
 # --- Auto-seeding and Initialization ---
 from services.initialization_service import get_initialization_service
@@ -510,7 +576,7 @@ def _claim_next_pending_note():
     conn.isolation_level = None  # autocommit mode for immediate lock/retry simplicity
     c = conn.cursor()
     row = c.execute(
-        "SELECT id FROM notes WHERE status = 'pending' ORDER BY timestamp ASC LIMIT 1"
+        "SELECT id FROM notes WHERE status = 'pending' ORDER BY COALESCE(timestamp, created_at) ASC LIMIT 1"
     ).fetchone()
     if not row:
         conn.close()
@@ -648,9 +714,8 @@ async def process_audio_queue():
     if next_item:
         note_id, user_id = next_item
         try:
-            if REALTIME_AVAILABLE:
-                from tasks_enhanced import process_note_with_status
-                await process_note_with_status(note_id)
+            if process_note_with_status is not None:
+                await process_note_with_status(note_id)  # type: ignore
             else:
                 import asyncio
                 loop = asyncio.get_event_loop()
@@ -1090,6 +1155,18 @@ def mobile_capture_page(request: Request):
     """Mobile-optimized capture interface"""
     return render_page(request, "mobile_capture.html", {})
 
+# Enhanced Capture Dashboard
+@app.get("/capture/enhanced")
+def enhanced_capture_dashboard(request: Request):
+    """Enhanced capture dashboard with all capture methods"""
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+    
+    return render_page(request, "enhanced_capture_dashboard.html", {
+        "user": current_user
+    })
+
 # Main endpoints (keep existing)
 @app.get("/")
 def dashboard(
@@ -1110,18 +1187,18 @@ def dashboard(
             FROM notes_fts fts
             JOIN notes n ON n.id = fts.rowid
             WHERE notes_fts MATCH ? AND n.user_id = ?
-            ORDER BY n.timestamp DESC LIMIT 100
+            ORDER BY COALESCE(n.timestamp, n.created_at) DESC LIMIT 100
         """,
             (q, current_user.id),
         ).fetchall()
     elif tag:
         rows = c.execute(
-            "SELECT * FROM notes WHERE tags LIKE ? AND user_id = ? ORDER BY timestamp DESC",
+            "SELECT * FROM notes WHERE tags LIKE ? AND user_id = ? ORDER BY COALESCE(timestamp, created_at) DESC",
             (f"%{tag}%", current_user.id),
         ).fetchall()
     else:
         rows = c.execute(
-            "SELECT * FROM notes WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100",
+            "SELECT * FROM notes WHERE user_id = ? ORDER BY COALESCE(timestamp, created_at) DESC LIMIT 100",
             (current_user.id,),
         ).fetchall()
     notes = [dict(zip([col[0] for col in c.description], row)) for row in rows]
@@ -1214,7 +1291,7 @@ def dashboard(
             pass
         # Add word count and audio duration for display
         try:
-            n["word_count"] = _word_count(n.get("content") or n.get("summary") or "")
+            n["word_count"] = _word_count(n.get("body") or n.get("content") or n.get("summary") or "")
             if (n.get("type") or "").lower() == "audio":
                 n["audio_duration_hms"] = _audio_duration_from_note(n)
             n["tz_abbr"] = _tz_abbrev(n.get("timestamp"))
@@ -1227,11 +1304,11 @@ def dashboard(
     # Recent notes panel data (always last 10)
     recent_rows = c.execute(
         """
-        SELECT id, title, type, timestamp, audio_filename, status, tags,
+        SELECT id, title, type, COALESCE(timestamp, created_at) as timestamp, audio_filename, status, tags,
                file_filename, file_type, file_mime_type
         FROM notes
         WHERE user_id = ?
-        ORDER BY (tags LIKE '%pinned%') DESC, timestamp DESC
+        ORDER BY (tags LIKE '%pinned%') DESC, COALESCE(timestamp, created_at) DESC
         LIMIT 10
         """,
         (current_user.id,),
@@ -1384,14 +1461,14 @@ async def get_audio_queue_status(current_user: User = Depends(get_current_user))
     
     # Get user's audio notes with their current status
     c.execute("""
-        SELECT n.id, n.title, n.status, n.timestamp, n.audio_filename,
+        SELECT n.id, n.title, n.status, COALESCE(n.timestamp, n.created_at) as timestamp, n.audio_filename,
                CASE 
                  WHEN n.status LIKE '%:%' THEN CAST(SUBSTR(n.status, INSTR(n.status, ':') + 1) AS INTEGER)
                  ELSE 0
                END as progress_percent
         FROM notes n
         WHERE n.user_id = ? AND n.type = 'audio' 
-        ORDER BY n.timestamp DESC
+        ORDER BY COALESCE(n.timestamp, n.created_at) DESC
         LIMIT 10
     """, (current_user.id,))
     
@@ -1428,7 +1505,7 @@ async def transcribe_status(current_user: User = Depends(get_current_user)):
         (current_user.id,),
     ).fetchone()[0]
     last_done = c.execute(
-        "SELECT timestamp FROM notes WHERE user_id=? AND type='audio' AND status='complete' ORDER BY timestamp DESC LIMIT 1",
+        "SELECT COALESCE(timestamp, created_at) FROM notes WHERE user_id=? AND type='audio' AND status='complete' ORDER BY COALESCE(timestamp, created_at) DESC LIMIT 1",
         (current_user.id,),
     ).fetchone()
     conn.close()
@@ -1574,26 +1651,20 @@ async def webhook_audio_upload(
     set_parts = []
     params = []
     for k, v in fields.items():
-        set_parts.append(f"{k} = ?")
-        params.append(v)
+        if k == 'content':
+            set_parts.append("body = ?")
+            params.append(v)
+            set_parts.append("content = ?")
+            params.append(v)
+        else:
+            set_parts.append(f"{k} = ?")
+            params.append(v)
+    set_parts.append("updated_at = datetime('now')")
     params.extend([note_id, current_user.id])
     c.execute(
         f"UPDATE notes SET {', '.join(set_parts)} WHERE id = ? AND user_id = ?",
         params,
     )
-
-    # Refresh FTS row
-    row2 = c.execute(
-        "SELECT title, summary, tags, actions, content FROM notes WHERE id = ?",
-        (note_id,),
-    ).fetchone()
-    if row2:
-        title, summary, tags, actions, content = row2
-        c.execute("DELETE FROM notes_fts WHERE rowid = ?", (note_id,))
-        c.execute(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-            (note_id, title, summary, tags, actions, content),
-        )
 
     conn.commit()
     conn.close()
@@ -1738,7 +1809,7 @@ async def debug_recent_uploads(current_user: User = Depends(get_current_user)):
     c = conn.cursor()
     rows = c.execute(
         """
-        SELECT id, title, type, status, file_filename, file_type, file_mime_type, file_size, timestamp
+        SELECT id, title, type, status, file_filename, file_type, file_mime_type, file_size, COALESCE(timestamp, created_at) as timestamp
         FROM notes
         WHERE user_id = ? AND file_filename IS NOT NULL AND file_filename != ''
         ORDER BY id DESC
@@ -1814,9 +1885,10 @@ async def webhook_discord_legacy2(
     conn = get_conn()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO notes (title, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             note[:60] + "..." if len(note) > 60 else note,
+            note,
             note,
             summary,
             tags,
@@ -1828,12 +1900,6 @@ async def webhook_discord_legacy2(
     )
     conn.commit()
     note_id = c.lastrowid
-    
-    c.execute(
-        "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-        (note_id, note[:60] + "..." if len(note) > 60 else note, summary, tags, actions, note),
-    )
-    conn.commit()
     conn.close()
     
     return {"status": "ok", "note_id": note_id}
@@ -1952,8 +2018,8 @@ def edit_post(
     conn = get_conn()
     c = conn.cursor()
     c.execute(
-        "UPDATE notes SET content = ?, tags = ? WHERE id = ? AND user_id = ?",
-        (content, tags, note_id, current_user.id),
+        "UPDATE notes SET body = ?, content = ?, tags = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+        (content, content, tags, note_id, current_user.id),
     )
     row = c.execute(
         "SELECT title, summary, actions FROM notes WHERE id = ? AND user_id = ?",
@@ -1962,10 +2028,7 @@ def edit_post(
     if row:
         title, summary, actions = row
         c.execute("DELETE FROM notes_fts WHERE rowid = ?", (note_id,))
-        c.execute(
-            "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-            (note_id, title, summary, tags, actions, content),
-        )
+        # FTS triggers keep notes_fts in sync; no manual insert needed
     conn.commit()
     conn.close()
     if "application/json" in request.headers.get("accept", ""):
@@ -2289,13 +2352,14 @@ async def capture(
         # Insert main note record
         c.execute("""
             INSERT INTO notes (
-                title, content, summary, tags, actions, type, timestamp, 
+                title, body, content, summary, tags, actions, type, timestamp, 
                 audio_filename, file_filename, file_type, file_mime_type, 
                 file_size, extracted_text, file_metadata, status, user_id,
                 source_url, web_metadata, screenshot_path, content_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             title,
+            content,
             content,
             "",  # summary will be generated later
             tags,
@@ -2318,12 +2382,6 @@ async def capture(
         ))
         
         note_id = c.lastrowid
-        
-        # Insert into FTS
-        c.execute("""
-            INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (note_id, title, "", tags, "", content, extracted_text))
         
         conn.commit()
         
@@ -2598,7 +2656,7 @@ def activity_timeline(
     conn = get_conn()
     c = conn.cursor()
 
-    base_query = "SELECT id, summary, type, timestamp FROM notes WHERE user_id = ?"
+    base_query = "SELECT id, summary, type, COALESCE(timestamp, created_at) as timestamp FROM notes WHERE user_id = ?"
     conditions = []
     params = [current_user.id]
     if activity_type and activity_type != "all":
@@ -2612,7 +2670,7 @@ def activity_timeline(
         params.append(end)
     if conditions:
         base_query += " AND " + " AND ".join(conditions)
-    base_query += " ORDER BY timestamp DESC LIMIT 100"
+    base_query += " ORDER BY COALESCE(timestamp, created_at) DESC LIMIT 100"
 
     rows = c.execute(base_query, params).fetchall()
     activities = [
@@ -3184,7 +3242,7 @@ async def get_recent_captures(
         query += " AND type = ?"
         params.append(type)
     
-    query += " ORDER BY timestamp DESC LIMIT ?"
+    query += " ORDER BY COALESCE(timestamp, created_at) DESC LIMIT ?"
     params.append(limit)
     
     rows = c.execute(query, params).fetchall()
@@ -3307,6 +3365,9 @@ async def update_note_partial(
         params.append(update_data['title'])
     
     if 'content' in update_data and update_data['content'] is not None:
+        # Keep body and content in sync during transition
+        updates.append("body = ?")
+        params.append(update_data['content'])
         updates.append("content = ?")
         params.append(update_data['content'])
     
@@ -3315,9 +3376,10 @@ async def update_note_partial(
         params.append(update_data['tags'])
     
     if updates:
-        # Add timestamp update
+        # Add timestamp and updated_at
         updates.append("timestamp = ?")
         params.append(datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        updates.append("updated_at = datetime('now')")
         
         query = f"UPDATE notes SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
         params.extend([note_id, current_user.id])
@@ -3347,10 +3409,11 @@ async def update_note_full(
     # Update note
     c.execute("""
         UPDATE notes 
-        SET title = ?, content = ?, tags = ?, timestamp = ?
+        SET title = ?, body = ?, content = ?, tags = ?, timestamp = ?, updated_at = datetime('now')
         WHERE id = ? AND user_id = ?
     """, (
         update_data.get('title', ''),
+        update_data.get('content', ''),
         update_data.get('content', ''),
         update_data.get('tags', ''),
         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -3716,7 +3779,7 @@ async def get_recent_notes(
     try:
         cursor.execute(
             """
-            SELECT id, title, content, created_at, type, tags
+            SELECT id, title, COALESCE(body, content) as content, created_at, type, tags
             FROM notes 
             WHERE user_id = ?
             ORDER BY created_at DESC 

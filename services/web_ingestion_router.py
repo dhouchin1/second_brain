@@ -209,19 +209,15 @@ async def smart_capture(
         
         c.execute("""
             INSERT INTO notes (
-                title, content, tags, type, timestamp, status, user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                title, body, content, tags, type, timestamp, status, user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            title, request.content, request.tags or "", "text", now, "complete", current_user.id
+            title, request.content, request.content, request.tags or "", "text", now, "complete", current_user.id
         ))
         
         note_id = c.lastrowid
         
-        # Add to FTS
-        c.execute("""
-            INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (note_id, title, "", request.tags or "", "", request.content, request.content))
+        # FTS triggers will index this note automatically
         
         conn.commit()
         

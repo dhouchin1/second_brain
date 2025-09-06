@@ -67,15 +67,26 @@ class AutoSeedingService:
             
             note_count = cursor.fetchone()[0]
             
-            # Check if already auto-seeded
-            cursor = conn.execute("""
+            # Check if already auto-seeded (tag/namespace based)
+            cursor = conn.execute(
+                """
                 SELECT COUNT(*) as seed_count
-                FROM notes 
-                WHERE user_id = ? 
-                AND (title LIKE '%Weekly Review%' 
-                     OR title LIKE '%SQLite Performance%' 
-                     OR content LIKE '%seed-%')
-            """, (user_id,))
+                FROM notes
+                WHERE user_id = ?
+                  AND (
+                      tags LIKE '%seed%'
+                      OR tags LIKE ?
+                      OR content LIKE ?
+                      OR title LIKE ?
+                  )
+                """,
+                (
+                    user_id,
+                    f"%ns:{self.config.namespace}%",
+                    f"%{self.config.namespace}%",
+                    f"%{self.config.namespace}%",
+                ),
+            )
             
             seed_count = cursor.fetchone()[0]
             
@@ -133,7 +144,8 @@ class AutoSeedingService:
                 force_overwrite=False,
                 include_embeddings=self.config.include_embeddings,
                 embed_model=self.config.embed_model,
-                ollama_url=self.config.ollama_url
+                ollama_url=self.config.ollama_url,
+                refresh_search_indices=getattr(settings, 'auto_seeding_refresh_indices', True),
             )
             
             log.info("Auto-seeding vault for user %s with namespace %s", user_id, self.config.namespace)
@@ -141,7 +153,14 @@ class AutoSeedingService:
             
             if result.success:
                 # Record auto-seeding completion
-                self._record_auto_seeding(user_id, True, result.message)
+                self._record_auto_seeding(
+                    user_id,
+                    True,
+                    result.message,
+                    notes_created=getattr(result, 'notes_created', 0),
+                    files_written=getattr(result, 'files_written', 0),
+                    embeddings_created=getattr(result, 'embeddings_created', 0),
+                )
                 
                 return {
                     "success": True,
@@ -156,7 +175,14 @@ class AutoSeedingService:
                 }
             else:
                 # Record auto-seeding failure
-                self._record_auto_seeding(user_id, False, result.error or result.message)
+                self._record_auto_seeding(
+                    user_id,
+                    False,
+                    result.error or result.message,
+                    notes_created=getattr(result, 'notes_created', 0),
+                    files_written=getattr(result, 'files_written', 0),
+                    embeddings_created=getattr(result, 'embeddings_created', 0),
+                )
                 
                 return {
                     "success": False,
@@ -176,7 +202,10 @@ class AutoSeedingService:
                 "error": str(e)
             }
     
-    def _record_auto_seeding(self, user_id: int, success: bool, message: str) -> None:
+    def _record_auto_seeding(self, user_id: int, success: bool, message: str,
+                              notes_created: int = 0,
+                              files_written: int = 0,
+                              embeddings_created: int = 0) -> None:
         """Record auto-seeding attempt in database for tracking."""
         conn = self.get_conn()
         try:
@@ -193,17 +222,27 @@ class AutoSeedingService:
                 )
             """)
             
+            # Note: Metrics columns (notes_created, files_written, embeddings_created) 
+            # are added by migration 005_auto_seeding_metrics.sql
+            
             # Insert log entry
-            conn.execute("""
-                INSERT INTO auto_seeding_log (user_id, success, message, namespace, config)
-                VALUES (?, ?, ?, ?, ?)
-            """, (
-                user_id,
-                success,
-                message,
-                self.config.namespace,
-                str(self.config.__dict__)
-            ))
+            conn.execute(
+                """
+                INSERT INTO auto_seeding_log 
+                (user_id, success, message, namespace, config, notes_created, files_written, embeddings_created)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    success,
+                    message,
+                    self.config.namespace,
+                    str(self.config.__dict__),
+                    notes_created,
+                    files_written,
+                    embeddings_created,
+                ),
+            )
             
             conn.commit()
             
