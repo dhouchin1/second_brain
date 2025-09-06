@@ -13,9 +13,11 @@ import json
 import re
 from datetime import datetime, time
 from typing import Dict, Any, List, Optional, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import sqlite3
+import uuid
+from collections import defaultdict
 
 from services.auth_service import User
 
@@ -70,8 +72,17 @@ class SmartTemplate:
     confidence_score: float
     usage_count: int = 0
     last_used: Optional[datetime] = None
-    user_customizations: Dict[str, Any] = None
+    user_customizations: Dict[str, Any] = field(default_factory=dict)
     ai_generated: bool = False
+    # Template sharing features
+    is_public: bool = False
+    created_by: Optional[int] = None
+    rating: float = 0.0
+    rating_count: int = 0
+    download_count: int = 0
+    category: str = "general"
+    tags: List[str] = field(default_factory=list)
+    version: str = "1.0.0"
 
 
 class SmartTemplatesService:
@@ -786,7 +797,14 @@ class SmartTemplatesService:
                     "keywords": template.keywords,
                     "time_contexts": template.time_contexts,
                     "usage_count": template.usage_count,
-                    "confidence": template.confidence_score
+                    "confidence": template.confidence_score,
+                    "is_public": template.is_public,
+                    "rating": template.rating,
+                    "rating_count": template.rating_count,
+                    "download_count": template.download_count,
+                    "category": template.category,
+                    "tags": template.tags,
+                    "version": template.version
                 }
                 for template_id, template in self.templates.items()
             },
@@ -794,3 +812,404 @@ class SmartTemplatesService:
             "context_triggers": [t.value for t in ContextTrigger],
             "total_templates": len(self.templates)
         }
+    
+    # ──── Template Sharing & Discovery Features ────
+    
+    async def publish_template(self, user_id: int, template_id: str, is_public: bool = True) -> Dict[str, Any]:
+        """Publish a custom template to the community library"""
+        if template_id not in self.templates:
+            raise ValueError(f"Template {template_id} not found")
+        
+        template = self.templates[template_id]
+        
+        # Only template creator can publish
+        if template.created_by != user_id:
+            raise ValueError("Only the template creator can publish it")
+        
+        template.is_public = is_public
+        
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            
+            # Create public templates table if not exists
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS public_templates (
+                    id TEXT PRIMARY KEY,
+                    original_template_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    description TEXT,
+                    keywords TEXT,
+                    time_contexts TEXT,
+                    category TEXT DEFAULT 'general',
+                    tags TEXT,
+                    version TEXT DEFAULT '1.0.0',
+                    created_by INTEGER NOT NULL,
+                    published_at TEXT,
+                    rating REAL DEFAULT 0.0,
+                    rating_count INTEGER DEFAULT 0,
+                    download_count INTEGER DEFAULT 0,
+                    is_active INTEGER DEFAULT 1
+                )
+            """)
+            
+            # Publish template
+            public_id = f"public_{uuid.uuid4().hex[:8]}"
+            c.execute("""
+                INSERT OR REPLACE INTO public_templates 
+                (id, original_template_id, name, type, content, description, keywords, 
+                 time_contexts, category, tags, version, created_by, published_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                public_id,
+                template_id,
+                template.name,
+                template.type,
+                template.template_content,
+                template.description,
+                json.dumps(template.keywords),
+                json.dumps(template.time_contexts),
+                template.category,
+                json.dumps(template.tags),
+                template.version,
+                user_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ))
+            
+            conn.commit()
+            
+            return {
+                "public_id": public_id,
+                "template_id": template_id,
+                "name": template.name,
+                "status": "published" if is_public else "unpublished",
+                "published_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+        finally:
+            conn.close()
+    
+    async def discover_templates(self, 
+                               category: str = None, 
+                               template_type: str = None,
+                               keywords: List[str] = None,
+                               sort_by: str = "rating",  # rating, downloads, newest
+                               limit: int = 20) -> List[Dict[str, Any]]:
+        """Discover public templates from the community library"""
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            
+            # Build query
+            query = """
+                SELECT p.*, u.email as creator_email
+                FROM public_templates p
+                LEFT JOIN users u ON p.created_by = u.id
+                WHERE p.is_active = 1
+            """
+            params = []
+            
+            if category:
+                query += " AND p.category = ?"
+                params.append(category)
+            
+            if template_type:
+                query += " AND p.type = ?"
+                params.append(template_type)
+            
+            if keywords:
+                for keyword in keywords:
+                    query += " AND (p.keywords LIKE ? OR p.name LIKE ? OR p.description LIKE ?)"
+                    params.extend([f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"])
+            
+            # Sort options
+            if sort_by == "rating":
+                query += " ORDER BY p.rating DESC, p.rating_count DESC"
+            elif sort_by == "downloads":
+                query += " ORDER BY p.download_count DESC"
+            elif sort_by == "newest":
+                query += " ORDER BY p.published_at DESC"
+            else:
+                query += " ORDER BY p.rating DESC"
+            
+            query += f" LIMIT {limit}"
+            
+            rows = c.execute(query, params).fetchall()
+            
+            templates = []
+            for row in rows:
+                templates.append({
+                    "public_id": row[0],
+                    "original_template_id": row[1],
+                    "name": row[2],
+                    "type": row[3],
+                    "description": row[5],
+                    "keywords": json.loads(row[6]) if row[6] else [],
+                    "time_contexts": json.loads(row[7]) if row[7] else [],
+                    "category": row[8],
+                    "tags": json.loads(row[9]) if row[9] else [],
+                    "version": row[10],
+                    "creator_email": row[16] if row[16] else "Anonymous",
+                    "published_at": row[12],
+                    "rating": row[13],
+                    "rating_count": row[14],
+                    "download_count": row[15]
+                })
+            
+            return templates
+            
+        finally:
+            conn.close()
+    
+    async def install_public_template(self, user_id: int, public_id: str) -> str:
+        """Install a public template for the user"""
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            
+            # Get public template
+            row = c.execute("""
+                SELECT * FROM public_templates 
+                WHERE id = ? AND is_active = 1
+            """, (public_id,)).fetchone()
+            
+            if not row:
+                raise ValueError(f"Public template {public_id} not found")
+            
+            # Create custom template for user
+            custom_id = f"installed_{user_id}_{uuid.uuid4().hex[:8]}"
+            
+            template_data = {
+                "name": row[2],
+                "type": row[3],
+                "content": row[4],
+                "description": row[5],
+                "keywords": json.loads(row[6]) if row[6] else [],
+                "time_contexts": json.loads(row[7]) if row[7] else [],
+                "ai_generated": False
+            }
+            
+            # Install as custom template
+            template_id = await self.create_custom_template(user_id, template_data)
+            
+            # Increment download count
+            c.execute("""
+                UPDATE public_templates 
+                SET download_count = download_count + 1
+                WHERE id = ?
+            """, (public_id,))
+            
+            # Record installation
+            c.execute("""
+                INSERT INTO template_installations (user_id, public_id, installed_template_id, installed_at)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, public_id, template_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            
+            conn.commit()
+            
+            return template_id
+            
+        finally:
+            conn.close()
+    
+    async def rate_template(self, user_id: int, public_id: str, rating: float) -> Dict[str, Any]:
+        """Rate a public template (1-5 stars)"""
+        if not (1.0 <= rating <= 5.0):
+            raise ValueError("Rating must be between 1.0 and 5.0")
+        
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            
+            # Create ratings table if not exists
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS template_ratings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    public_template_id TEXT NOT NULL,
+                    rating REAL NOT NULL,
+                    review TEXT,
+                    created_at TEXT,
+                    UNIQUE(user_id, public_template_id)
+                )
+            """)
+            
+            # Upsert rating
+            c.execute("""
+                INSERT OR REPLACE INTO template_ratings 
+                (user_id, public_template_id, rating, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, public_id, rating, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            
+            # Recalculate template rating
+            result = c.execute("""
+                SELECT AVG(rating) as avg_rating, COUNT(*) as count
+                FROM template_ratings
+                WHERE public_template_id = ?
+            """, (public_id,)).fetchone()
+            
+            new_rating = result[0] if result[0] else 0.0
+            rating_count = result[1] if result[1] else 0
+            
+            # Update public template rating
+            c.execute("""
+                UPDATE public_templates 
+                SET rating = ?, rating_count = ?
+                WHERE id = ?
+            """, (new_rating, rating_count, public_id))
+            
+            conn.commit()
+            
+            return {
+                "public_id": public_id,
+                "user_rating": rating,
+                "new_average_rating": round(new_rating, 2),
+                "total_ratings": rating_count
+            }
+            
+        finally:
+            conn.close()
+    
+    async def get_template_categories(self) -> Dict[str, int]:
+        """Get available template categories with counts"""
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            
+            rows = c.execute("""
+                SELECT category, COUNT(*) as count
+                FROM public_templates
+                WHERE is_active = 1
+                GROUP BY category
+                ORDER BY count DESC
+            """).fetchall()
+            
+            categories = {}
+            for row in rows:
+                categories[row[0]] = row[1]
+            
+            # Add default categories if empty
+            if not categories:
+                categories = {
+                    "productivity": 0,
+                    "meetings": 0,
+                    "learning": 0,
+                    "planning": 0,
+                    "health": 0,
+                    "creative": 0,
+                    "general": 0
+                }
+            
+            return categories
+            
+        finally:
+            conn.close()
+    
+    # ──── Enhanced Template Features ────
+    
+    async def get_template_variations(self, template_id: str, user_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get template variations based on user context and preferences"""
+        if template_id not in self.templates:
+            raise ValueError(f"Template {template_id} not found")
+        
+        base_template = self.templates[template_id]
+        variations = []
+        
+        # Create variations based on context
+        variations.append({
+            "id": f"{template_id}_brief",
+            "name": f"{base_template.name} (Brief)",
+            "description": "Simplified version with essential sections only",
+            "content": self._create_brief_variation(base_template.template_content),
+            "variation_type": "brief"
+        })
+        
+        variations.append({
+            "id": f"{template_id}_detailed",
+            "name": f"{base_template.name} (Detailed)",
+            "description": "Extended version with additional sections",
+            "content": self._create_detailed_variation(base_template.template_content),
+            "variation_type": "detailed"
+        })
+        
+        if user_context.get("mobile", False):
+            variations.append({
+                "id": f"{template_id}_mobile",
+                "name": f"{base_template.name} (Mobile)",
+                "description": "Mobile-optimized version",
+                "content": self._create_mobile_variation(base_template.template_content),
+                "variation_type": "mobile"
+            })
+        
+        return variations
+    
+    def _create_brief_variation(self, content: str) -> str:
+        """Create a brief version of template"""
+        lines = content.split('\n')
+        brief_lines = []
+        
+        for line in lines:
+            # Keep main headers and essential content
+            if line.startswith('# ') or line.startswith('## '):
+                brief_lines.append(line)
+            elif line.startswith('- ') and 'action' in line.lower():
+                brief_lines.append(line)
+            elif line.startswith('*') and len(line) < 50:
+                brief_lines.append(line)
+        
+        return '\n'.join(brief_lines)
+    
+    def _create_detailed_variation(self, content: str) -> str:
+        """Create a detailed version of template"""
+        detailed_content = content + "\n\n"
+        
+        # Add common detailed sections
+        detailed_content += """## 📋 Additional Details
+
+
+## 🔄 Follow-up Actions
+- [ ] 
+
+## 📊 Metrics & KPIs
+
+
+## 🎯 Success Criteria
+
+
+## 📖 References & Resources
+- 
+
+## 💭 Reflection Questions
+1. What went well?
+2. What could be improved?
+3. What are the next steps?
+
+---
+*Template Version: Detailed*
+*Generated: {date}*""".format(date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        return detailed_content
+    
+    def _create_mobile_variation(self, content: str) -> str:
+        """Create a mobile-optimized version"""
+        lines = content.split('\n')
+        mobile_lines = []
+        
+        for line in lines:
+            # Simplify for mobile
+            if line.startswith('# '):
+                mobile_lines.append(line[:30] + "..." if len(line) > 30 else line)
+            elif line.startswith('## '):
+                # Use emojis for mobile headers
+                mobile_lines.append(line)
+            elif line.startswith('- [ ] '):
+                mobile_lines.append(line)
+            elif len(line.strip()) > 0 and not line.startswith('*'):
+                mobile_lines.append(line)
+        
+        mobile_content = '\n'.join(mobile_lines)
+        mobile_content += "\n\n*📱 Mobile optimized*"
+        
+        return mobile_content

@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from config import settings
 
 from services.vault_seeding_service import (
     VaultSeedingService, SeedingOptions, SeedingResult, get_seeding_service
@@ -28,11 +29,12 @@ get_current_user = None
 # Request/Response models
 class SeedVaultRequest(BaseModel):
     """Request model for vault seeding."""
-    namespace: str = ".seed_samples"
+    namespace: str = settings.auto_seeding_namespace
     force_overwrite: bool = False
     include_embeddings: bool = True
-    embed_model: str = "nomic-embed-text"
+    embed_model: str = settings.auto_seeding_embed_model
     ollama_url: str = "http://localhost:11434"
+    refresh_search_indices: bool = settings.auto_seeding_refresh_indices
 
 class SeedingStatusResponse(BaseModel):
     """Response model for seeding status."""
@@ -54,7 +56,7 @@ class SeedingResultResponse(BaseModel):
 
 class ClearSeedContentRequest(BaseModel):
     """Request model for clearing seed content."""
-    namespace: str = ".seed_samples"
+    namespace: str = settings.auto_seeding_namespace
 
 # Router setup
 router = APIRouter(prefix="/api/vault/seeding", tags=["vault-seeding"])
@@ -128,7 +130,8 @@ async def seed_vault(
             force_overwrite=request.force_overwrite,
             include_embeddings=request.include_embeddings,
             embed_model=request.embed_model,
-            ollama_url=request.ollama_url
+            ollama_url=request.ollama_url,
+            refresh_search_indices=request.refresh_search_indices,
         )
         
         # Perform seeding
@@ -197,10 +200,11 @@ async def test_seeding_dependencies(current_user: User = Depends(get_current_use
         # Check vault path
         from config import settings
         from pathlib import Path
+        import os
         
         vault_path = Path(settings.vault_path)
         vault_exists = vault_path.exists()
-        vault_writable = vault_path.is_dir() and vault_path.stat().st_mode & 0o200
+        vault_writable = vault_path.is_dir() and os.access(vault_path, os.W_OK)
         
         return {
             "success": True,

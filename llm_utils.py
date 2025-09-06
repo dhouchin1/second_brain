@@ -1,7 +1,9 @@
 import requests
 import json
+import logging
 from config import settings
-<<<<<<< HEAD
+
+logger = logging.getLogger(__name__)
 
 def _ollama_options_dict():
     """Build an options dict for Ollama from settings, skipping Nones.
@@ -20,13 +22,32 @@ def _ollama_options_dict():
     if getattr(settings, 'ollama_num_gpu', None) is not None:
         opts['num_gpu'] = int(settings.ollama_num_gpu)
     return opts
-=======
->>>>>>> origin/main
 
+
+def _check_ai_processing_allowed():
+    """Check if AI processing is allowed based on local-first configuration."""
+    if not settings.ai_processing_enabled:
+        logger.warning("AI processing disabled via ai_processing_enabled=False")
+        return False
+    
+    # Check if external AI is being used when not allowed
+    if hasattr(settings, 'ai_allow_external') and not settings.ai_allow_external:
+        # Ollama on localhost is considered local
+        ollama_url = getattr(settings, 'ollama_api_url', 'http://localhost:11434/api/generate')
+        if not (ollama_url.startswith('http://localhost:') or ollama_url.startswith('http://127.0.0.1:')):
+            logger.warning(f"External Ollama URL '{ollama_url}' not allowed (ai_allow_external=False)")
+            return False
+    
+    return True
 
 def ollama_summarize(text, prompt=None):
-    """Return summary, tags and actions extracted from *text* using Ollama."""
-    print(f"[ollama_summarize] Called with text: {repr(text[:200])}")
+    """Return summary, tags and actions extracted from *text* using local Ollama."""
+    logger.info(f"[ollama_summarize] Called with text: {repr(text[:200])}")
+    
+    if not _check_ai_processing_allowed():
+        logger.warning("AI processing not allowed, returning empty results")
+        return {"summary": "", "tags": [], "actions": []}
+    
     if not text or not text.strip():
         return {"summary": "", "tags": [], "actions": []}
 
@@ -40,16 +61,10 @@ def ollama_summarize(text, prompt=None):
             f"{system_prompt}\n\n{text}\n\n"
             "Respond in JSON with keys 'summary', 'tags', and 'actions'."
         ),
-<<<<<<< HEAD
         "options": _ollama_options_dict() or None,
     }
     try:
         resp = requests.post(settings.ollama_api_url, json=data, stream=True, timeout=60)
-=======
-    }
-    try:
-        resp = requests.post(settings.ollama_api_url, json=data, stream=True, timeout=120)
->>>>>>> origin/main
         output = ""
         for line in resp.iter_lines():
             if line:
@@ -82,8 +97,14 @@ def ollama_summarize(text, prompt=None):
 
 
 def ollama_generate_title(text):
+    """Generate title using local Ollama."""
+    if not _check_ai_processing_allowed():
+        logger.warning("AI processing not allowed, returning default title")
+        return "Untitled Note"
+        
     if not text or not text.strip():
         return "Untitled Note"
+        
     prompt = (
         "Generate a concise, descriptive title (max 10 words) for the following note or meeting transcript. "
         "Avoid generic phrases like 'Meeting Transcript' or 'Recording.' "
@@ -93,7 +114,6 @@ def ollama_generate_title(text):
     try:
         resp = requests.post(
             settings.ollama_api_url,
-<<<<<<< HEAD
             json={
                 "model": settings.ollama_model,
                 "prompt": prompt,
@@ -101,10 +121,6 @@ def ollama_generate_title(text):
                 "options": _ollama_options_dict() or None,
             },
             timeout=30,
-=======
-            json={"model": settings.ollama_model, "prompt": prompt, "stream": True},
-            timeout=60,
->>>>>>> origin/main
         )
         title = ""
         for line in resp.iter_lines():
@@ -116,7 +132,3 @@ def ollama_generate_title(text):
     except Exception as e:
         print("Ollama title exception:", e)
         return "Untitled Note"
-<<<<<<< HEAD
-=======
-
->>>>>>> origin/main

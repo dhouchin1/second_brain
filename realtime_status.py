@@ -113,7 +113,7 @@ class StatusManager:
         c = conn.cursor()
         
         row = c.execute(
-            "SELECT id, title, status, timestamp, type, user_id FROM notes WHERE id = ?",
+            "SELECT id, title, status, COALESCE(timestamp, created_at) as ts, type, user_id FROM notes WHERE id = ?",
             (note_id,)
         ).fetchone()
         
@@ -220,13 +220,23 @@ def create_status_endpoint(app):
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
             )
         
-        # For non-complete notes, try authentication
+        # For non-complete notes, try authentication via cookie/session or token
         user_id: int | None = None
         try:
             current_user = __import__('app').get_current_user_silent(request)
             user_id = getattr(current_user, 'id', None) if current_user else None
         except Exception:
             user_id = None
+        if not user_id and token:
+            try:
+                from jose import jwt
+                app_mod = __import__('app')
+                payload = jwt.decode(token, app_mod.SECRET_KEY, algorithms=[app_mod.ALGORITHM])
+                uid = payload.get('uid')
+                if uid is not None:
+                    user_id = int(uid)
+            except Exception:
+                user_id = None
             
         if not user_id:
             # No auth - return error and close
@@ -301,10 +311,10 @@ def create_status_endpoint(app):
         
         # Get pending notes
         pending_notes = c.execute(
-            """SELECT id, title, status, timestamp, type 
+            """SELECT id, title, status, COALESCE(timestamp, created_at) as ts, type 
                FROM notes 
                WHERE user_id = ? AND (status = 'pending' OR status LIKE '%:%')
-               ORDER BY timestamp DESC""",
+               ORDER BY ts DESC""",
             (user_id,)
         ).fetchall()
         

@@ -13,8 +13,7 @@ CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at);
 -- FTS5 virtual table referencing notes
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   title, body, tags,
-  content='notes', content_rowid='id',
-  tokenize='unicode61 remove_diacritics 2 stemmer porter'
+  content='notes', content_rowid='id'
 );
 
 -- Triggers to keep FTS5 in sync with notes

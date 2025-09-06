@@ -11,9 +11,15 @@ import sys
 
 DB = os.getenv("SQLITE_DB", "notes.db")
 VEC = os.getenv("SQLITE_VEC_PATH")
-
 if not VEC:
-    print("ERROR: SQLITE_VEC_PATH not set. Export path to sqlite-vec0.dylib/.so and retry.")
+    try:
+        import sqlite_vec  # type: ignore
+        VEC = getattr(sqlite_vec, 'loadable_path', lambda: None)()
+    except Exception:
+        VEC = None
+if not VEC:
+    print("ERROR: SQLITE_VEC_PATH not set and could not auto-detect via sqlite_vec package.")
+    print("Tips: set env SQLITE_VEC_PATH to the sqlite-vec0.dylib/.so; or pip install sqlite-vec.")
     sys.exit(1)
 
 con = sqlite3.connect(DB)
@@ -30,4 +36,3 @@ except Exception as e:
     sys.exit(2)
 finally:
     con.close()
-

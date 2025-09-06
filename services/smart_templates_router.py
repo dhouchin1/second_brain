@@ -52,6 +52,27 @@ class CreateCustomTemplateRequest(BaseModel):
     keywords: List[str] = []
     time_contexts: List[str] = ["morning", "afternoon", "evening"]
 
+class PublishTemplateRequest(BaseModel):
+    """Request model for publishing templates"""
+    template_id: str
+    is_public: bool = True
+    category: str = "general"
+    tags: List[str] = []
+
+class TemplateDiscoveryRequest(BaseModel):
+    """Request model for template discovery"""
+    category: Optional[str] = None
+    template_type: Optional[str] = None
+    keywords: List[str] = []
+    sort_by: str = "rating"  # rating, downloads, newest
+    limit: int = 20
+
+class RateTemplateRequest(BaseModel):
+    """Request model for rating templates"""
+    public_id: str
+    rating: float
+    review: Optional[str] = None
+
 
 # ─── Core Template Endpoints ───
 
@@ -424,9 +445,12 @@ async def templates_status_public():
                 "usage_analytics": True,
                 "variable_substitution": True,
                 "time_based_suggestions": True,
-                "keyword_matching": True
+                "keyword_matching": True,
+                "template_sharing": True,
+                "community_discovery": True,
+                "template_variations": True
             },
-            "version": "1.0.0"
+            "version": "1.1.0"
         })
         
     except Exception as e:
@@ -440,4 +464,248 @@ async def templates_status_public():
         )
 
 
-print("[Smart Templates Router] Loaded successfully")
+# ─── Template Sharing & Discovery Endpoints ───
+
+@router.post("/publish")
+async def publish_template(
+    request_data: PublishTemplateRequest,
+    fastapi_request: Request
+):
+    """Publish a template to the community library"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        result = await templates_service.publish_template(
+            current_user.id,
+            request_data.template_id,
+            request_data.is_public
+        )
+        
+        return JSONResponse(content={
+            **result,
+            "published_by": current_user.email
+        })
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish template: {str(e)}")
+
+
+@router.post("/discover")
+async def discover_templates(
+    request_data: TemplateDiscoveryRequest,
+    fastapi_request: Request
+):
+    """Discover public templates from the community library"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        templates = await templates_service.discover_templates(
+            category=request_data.category,
+            template_type=request_data.template_type,
+            keywords=request_data.keywords,
+            sort_by=request_data.sort_by,
+            limit=request_data.limit
+        )
+        
+        return JSONResponse(content={
+            "templates": templates,
+            "total_found": len(templates),
+            "search_criteria": {
+                "category": request_data.category,
+                "template_type": request_data.template_type,
+                "keywords": request_data.keywords,
+                "sort_by": request_data.sort_by,
+                "limit": request_data.limit
+            },
+            "searched_by": current_user.email
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to discover templates: {str(e)}")
+
+
+@router.get("/discover")
+async def discover_templates_simple(
+    fastapi_request: Request,
+    category: Optional[str] = None,
+    template_type: Optional[str] = None,
+    sort_by: str = "rating",
+    limit: int = 20
+):
+    """Simple GET endpoint for template discovery"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        templates = await templates_service.discover_templates(
+            category=category,
+            template_type=template_type,
+            keywords=[],
+            sort_by=sort_by,
+            limit=limit
+        )
+        
+        return JSONResponse(content={
+            "templates": templates,
+            "total_found": len(templates),
+            "search_criteria": {
+                "category": category,
+                "template_type": template_type,
+                "sort_by": sort_by,
+                "limit": limit
+            }
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to discover templates: {str(e)}")
+
+
+@router.post("/install/{public_id}")
+async def install_public_template(
+    public_id: str,
+    fastapi_request: Request
+):
+    """Install a public template for the user"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        template_id = await templates_service.install_public_template(
+            current_user.id,
+            public_id
+        )
+        
+        return JSONResponse(content={
+            "template_id": template_id,
+            "public_id": public_id,
+            "installed_by": current_user.email,
+            "status": "installed",
+            "message": "Template installed successfully"
+        })
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to install template: {str(e)}")
+
+
+@router.post("/rate")
+async def rate_template(
+    request_data: RateTemplateRequest,
+    fastapi_request: Request
+):
+    """Rate a public template"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        result = await templates_service.rate_template(
+            current_user.id,
+            request_data.public_id,
+            request_data.rating
+        )
+        
+        return JSONResponse(content={
+            **result,
+            "rated_by": current_user.email
+        })
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rate template: {str(e)}")
+
+
+@router.get("/categories")
+async def get_template_categories(fastapi_request: Request):
+    """Get available template categories with counts"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        categories = await templates_service.get_template_categories()
+        
+        return JSONResponse(content={
+            "categories": categories,
+            "total_categories": len(categories),
+            "retrieved_by": current_user.email
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get categories: {str(e)}")
+
+
+@router.get("/variations/{template_id}")
+async def get_template_variations(
+    template_id: str,
+    fastapi_request: Request,
+    mobile: bool = False
+):
+    """Get template variations based on user context"""
+    if not templates_service:
+        raise HTTPException(status_code=500, detail="Templates service not initialized")
+    
+    # Get current user
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    try:
+        user_context = {
+            "mobile": mobile,
+            "user_id": current_user.id
+        }
+        
+        variations = await templates_service.get_template_variations(
+            template_id,
+            user_context
+        )
+        
+        return JSONResponse(content={
+            "template_id": template_id,
+            "variations": variations,
+            "context": user_context,
+            "total_variations": len(variations)
+        })
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get template variations: {str(e)}")
+
+
+print("[Smart Templates Router] Enhanced with sharing & discovery features - Loaded successfully")

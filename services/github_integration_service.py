@@ -409,11 +409,12 @@ class GitHubIntegrationService:
                     # Update existing note
                     cursor.execute("""
                         UPDATE notes 
-                        SET title = ?, content = ?, tags = ?, updated_at = CURRENT_TIMESTAMP,
+                        SET title = ?, body = ?, content = ?, tags = ?, updated_at = CURRENT_TIMESTAMP,
                             metadata = ?
                         WHERE id = ? AND user_id = ?
                     """, (
                         content.title,
+                        content.content,
                         content.content,
                         ", ".join(content.tags),
                         json.dumps(content.metadata),
@@ -424,12 +425,13 @@ class GitHubIntegrationService:
                 else:
                     # Create new note
                     cursor.execute("""
-                        INSERT INTO notes (user_id, title, content, tags, file_type, status, 
+                        INSERT INTO notes (user_id, title, body, content, tags, file_type, status, 
                                          external_id, external_url, metadata, created_at)
-                        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, CURRENT_TIMESTAMP)
+                        VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, CURRENT_TIMESTAMP)
                     """, (
                         user_id,
                         content.title,
+                        content.content,
                         content.content,
                         ", ".join(content.tags),
                         content.type,

@@ -12,23 +12,16 @@ import os
 import sqlite3
 import json
 from pathlib import Path
-<<<<<<< HEAD
 from typing import Optional
-=======
-from typing import Iterable, Optional
->>>>>>> origin/main
 
 from services.embeddings import Embeddings
 
 MIGRATIONS = [
     Path('db/migrations/001_core.sql'),
     Path('db/migrations/002_vec.sql'),
-<<<<<<< HEAD
     Path('db/migrations/004_search_features.sql'),
     Path('db/migrations/005_github_integration.sql'),
     Path('db/migrations/006_search_benchmarking.sql'),
-=======
->>>>>>> origin/main
 ]
 
 class SearchService:
@@ -46,11 +39,31 @@ class SearchService:
         self.conn.execute('PRAGMA foreign_keys=ON;')
         try:
             self.conn.enable_load_extension(True)
-            if self.vec_ext_path:
-                self.conn.load_extension(self.vec_ext_path)
+            path = self.vec_ext_path
+            # Treat placeholder paths as unset
+            if path and path.startswith('/absolute/path/to/'):
+                path = None
+            # Try env path first
+            load_ok = False
+            if path:
+                try:
+                    self.conn.load_extension(path)
+                    load_ok = True
+                except Exception as e:
+                    print(f"[search] sqlite-vec load failed for {path}: {e}")
+            # Fallback: auto-detect from package
+            if not load_ok:
+                try:
+                    import sqlite_vec  # type: ignore
+                    auto_path = getattr(sqlite_vec, 'loadable_path', lambda: None)()
+                    if auto_path:
+                        self.conn.load_extension(auto_path)
+                        load_ok = True
+                except Exception as e:
+                    print(f"[search] sqlite-vec auto-detect load failed: {e}")
         except Exception as e:
             # Extension loading is optional; log and continue
-            print(f"[search] sqlite-vec not loaded: {e}")
+            print(f"[search] sqlite-vec not enabled: {e}")
 
     def _run_migrations(self):
         cur = self.conn.cursor()
@@ -58,11 +71,13 @@ class SearchService:
             if not path.exists():
                 continue
             sql = path.read_text(encoding='utf-8')
+            # Strip shell-style comment lines to avoid tokenizer issues
+            lines = [ln for ln in sql.splitlines() if not ln.lstrip().startswith('#')]
+            sql = "\n".join(lines)
             try:
                 cur.executescript(sql)
                 self.conn.commit()
             except sqlite3.OperationalError as e:
-                # vec migration may fail if extension not loaded; ignore
                 print(f"[search] migration {path.name} skipped/error: {e}")
                 self.conn.rollback()
 
@@ -106,7 +121,6 @@ class SearchService:
             print(f"[search] vector upsert failed (note {note_id}): {e}")
             self.conn.rollback()
 
-<<<<<<< HEAD
     def _sanitize_fts_query(self, q: str) -> str:
         """Sanitize query for FTS5 compatibility"""
         if not q or not q.strip():
@@ -146,8 +160,6 @@ class SearchService:
             # Use phrase search for multi-word queries
             return f'"{q}"'
 
-=======
->>>>>>> origin/main
     # ─── Search ─────────────────────────────────────────────────────────────
     def search(self, q: str, mode: str = 'hybrid', k: int = 20) -> list[sqlite3.Row]:
         if mode not in {'hybrid','keyword','semantic'}:
@@ -159,7 +171,6 @@ class SearchService:
         return self._hybrid(q, k)
 
     def _keyword(self, q: str, k: int) -> list[sqlite3.Row]:
-<<<<<<< HEAD
         # Sanitize query for FTS5
         sanitized_query = self._sanitize_fts_query(q)
         if not sanitized_query:
@@ -181,20 +192,6 @@ class SearchService:
         except Exception as e:
             print(f"[search] FTS query failed for '{sanitized_query}': {e}")
             return []
-=======
-        cur = self.conn.cursor()
-        rows = cur.execute(
-            """
-            SELECT n.*,
-                   bm25(notes_fts) AS kw_rank,
-                   snippet(notes_fts, 1, '<b>', '</b>', '…', 12) AS snippet
-            FROM notes_fts JOIN notes n ON notes_fts.rowid = n.id
-            WHERE notes_fts MATCH ?
-            ORDER BY kw_rank
-            LIMIT ?
-            """, (q, k)).fetchall()
-        return rows
->>>>>>> origin/main
 
     def _semantic(self, q: str, k: int) -> list[sqlite3.Row]:
         if not self._vec_table_exists():
@@ -205,7 +202,7 @@ class SearchService:
             """
             WITH vs AS (
               SELECT note_id AS id,
-                     1.0 - vec_cosine_distance(embedding, ?) AS vs_rank
+                     1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
               FROM note_vecs
               ORDER BY vs_rank DESC
               LIMIT ?
@@ -218,7 +215,6 @@ class SearchService:
     def _hybrid(self, q: str, k: int) -> list[sqlite3.Row]:
         if not self._vec_table_exists():
             return self._keyword(q, k)
-<<<<<<< HEAD
         
         # Sanitize query for FTS part
         sanitized_query = self._sanitize_fts_query(q)
@@ -230,11 +226,6 @@ class SearchService:
         cur = self.conn.cursor()
         try:
             rows = cur.execute(
-=======
-        qvec = self.embedder.embed(q)
-        cur = self.conn.cursor()
-        rows = cur.execute(
->>>>>>> origin/main
             """
             WITH kw AS (
               SELECT rowid AS id, bm25(notes_fts) AS kw_rank
@@ -244,7 +235,7 @@ class SearchService:
               LIMIT 50
             ),
             vs AS (
-              SELECT note_id AS id, 1.0 - vec_cosine_distance(embedding, ?) AS vs_rank
+              SELECT note_id AS id, 1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
               FROM note_vecs
               ORDER BY vs_rank DESC
               LIMIT 50
@@ -260,14 +251,9 @@ class SearchService:
             GROUP BY n.id
             ORDER BY score DESC
             LIMIT ?
-<<<<<<< HEAD
             """, (sanitized_query, json.dumps(qvec), k)).fetchall()
             return rows
         except Exception as e:
             print(f"[search] Hybrid search failed for '{sanitized_query}': {e}")
             # Fallback to semantic search only
             return self._semantic(q, k)
-=======
-            """, (q, json.dumps(qvec), k)).fetchall()
-        return rows
->>>>>>> origin/main

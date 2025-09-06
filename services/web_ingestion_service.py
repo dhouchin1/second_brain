@@ -511,11 +511,11 @@ class WebIngestionService:
                 # Update existing note
                 c.execute("""
                     UPDATE notes SET
-                        title = ?, content = ?, summary = ?, tags = ?, 
+                        title = ?, body = ?, content = ?, summary = ?, tags = ?, 
                         type = ?, file_metadata = ?, updated_at = datetime('now')
                     WHERE id = ? AND user_id = ?
                 """, (
-                    title, web_content.content, summary, tags,
+                    title, web_content.content, web_content.content, summary, tags,
                     content_type, json.dumps(file_metadata), note_id, user_id
                 ))
                 final_note_id = note_id
@@ -523,24 +523,16 @@ class WebIngestionService:
                 # Create new note
                 c.execute("""
                     INSERT INTO notes (
-                        title, content, summary, tags, actions, type, timestamp,
+                        title, body, content, summary, tags, actions, type, timestamp,
                         file_metadata, status, user_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    title, web_content.content, summary, tags, "",
+                    title, web_content.content, web_content.content, summary, tags, "",
                     content_type, now, json.dumps(file_metadata),
                     "complete", user_id
                 ))
                 final_note_id = c.lastrowid
-                
-                # Add to FTS index
-                c.execute("""
-                    INSERT INTO notes_fts(rowid, title, summary, tags, actions, content, extracted_text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    final_note_id, title, summary, tags, "",
-                    web_content.content, web_content.content
-                ))
+                # FTS triggers will index the note automatically
             
             conn.commit()
             return final_note_id
@@ -629,3 +621,8 @@ class UrlIngestionResponse(BaseModel):
     tags: List[str] = []
     screenshot_path: Optional[str] = None
     error: Optional[str] = None
+
+
+def get_web_ingestion_service(get_conn_func):
+    """Factory function to get web ingestion service."""
+    return WebIngestionService(get_conn_func)

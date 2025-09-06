@@ -29,7 +29,7 @@ class AnalyticsService:
         
         # This week
         this_week = c.execute(
-            "SELECT COUNT(*) as count FROM notes WHERE user_id = ? AND date(timestamp) >= date('now', '-7 days')",
+            "SELECT COUNT(*) as count FROM notes WHERE user_id = ? AND date(COALESCE(timestamp, created_at)) >= date('now', '-7 days')",
             (current_user.id,)
         ).fetchone()["count"]
         

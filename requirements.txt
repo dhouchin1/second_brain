@@ -4,7 +4,6 @@ jinja2
 watchdog>=3.0.0
 python-frontmatter>=1.0.0
 requests
-<<<<<<< HEAD
 pydantic>=2.9.0,<2.11.0
 pydantic-settings>=2.5.0,<2.6.0
 passlib[bcrypt]
@@ -25,6 +24,7 @@ aiohttp>=3.9.0
 Pillow>=10.0.0
 pytesseract>=0.3.10
 PyPDF2>=3.0.0
+PyMuPDF>=1.24.0
 python-magic>=0.4.27
 psutil
 
@@ -36,17 +36,3 @@ playwright>=1.40.0
 beautifulsoup4>=4.12.0
 html2text>=2020.1.16
 readability-lxml>=0.8.1
-=======
-pydantic
-pydantic-settings
-passlib[bcrypt]
-python-jose
-python-multipartsentence-transformers>=2.2.2
-discord.py==2.3.2
-aiohttp==3.9.0
-sentence-transformers>=2.2.2
-discord.py>=2.3.2
-aiohttp>=3.9.0
-python-frontmatter>=1.0.0
-watchdog>=3.0.0
->>>>>>> origin/main

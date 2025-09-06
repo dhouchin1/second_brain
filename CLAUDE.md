@@ -5,6 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 Second Brain is a comprehensive knowledge management system combining multi-modal input capture, AI-powered processing, and intelligent retrieval. It integrates tightly with Obsidian vaults, Discord bots, and Apple Shortcuts for seamless cross-platform note-taking and search.
 
+## Current Development Status (2025-09-05)
+**Phase:** Feature Complete MVP with Advanced Capture
+**Test Coverage:** 58/77 tests passing (75% success rate)
+**Stability:** Core unified capture system fully tested and stable
+**Next Phase:** Comprehensive manual testing and deployment preparation
+
 ## Architecture Overview
 
 ### Core Application Layer
@@ -14,9 +20,20 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 
 ### Service Layer (`services/`)
 The application uses a service-oriented architecture for modularity:
+
+#### Core Services (Fully Tested ✅)
+- **`unified_capture_service.py`** - Central orchestration for all content capture (16/16 tests passing)
+- **`unified_capture_router.py`** - Enhanced REST API with flexible request handling
 - **`search_adapter.py`** - Unified search service wrapping SQLite FTS5 + vector search with hybrid algorithms
 - **`search_index.py`** - Advanced search indexer with chunk-based FTS5 and sqlite-vec integration
 - **`embeddings.py`** - Sentence transformer embedding generation and management
+
+#### Advanced Capture Services (Implemented, Testing In Progress ⚠️)
+- **`advanced_capture_service.py`** - OCR, PDF, YouTube processing with dependency management
+- **`enhanced_apple_shortcuts_service.py`** - iOS/macOS integration with location and context data
+- **`enhanced_discord_service.py`** - Discord bot integration with thread processing
+
+#### Supporting Services
 - **`audio_queue.py`** - Asynchronous audio processing queue
 - **`obsidian_sync.py`** - Service-layer Obsidian integration (newer implementation)
 - **`auto_seeding_service.py`** - Automatic content seeding for new users to bootstrap search performance
