@@ -19,8 +19,10 @@ from fastapi import (
     Header,
     HTTPException,
     status,
+    WebSocket,
+    WebSocketDisconnect,
 )
-from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
+from fastapi.responses import RedirectResponse, FileResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
@@ -4285,6 +4287,253 @@ async def api_export_notes(
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
     finally:
         conn.close()
+
+# WebSocket Connection Manager for Real-time Updates
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict = {}  # user_id -> list of websockets
+    
+    async def connect(self, websocket: WebSocket, user_id: int):
+        await websocket.accept()
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
+        print(f"User {user_id} connected. Active connections: {len(self.active_connections.get(user_id, []))}")
+    
+    def disconnect(self, websocket: WebSocket, user_id: int):
+        if user_id in self.active_connections:
+            if websocket in self.active_connections[user_id]:
+                self.active_connections[user_id].remove(websocket)
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
+        print(f"User {user_id} disconnected. Active connections: {len(self.active_connections.get(user_id, []))}")
+    
+    async def send_to_user(self, user_id: int, message: dict):
+        if user_id in self.active_connections:
+            disconnected = []
+            for websocket in self.active_connections[user_id]:
+                try:
+                    await websocket.send_json(message)
+                except:
+                    disconnected.append(websocket)
+            
+            # Clean up disconnected websockets
+            for ws in disconnected:
+                self.disconnect(ws, user_id)
+    
+    async def broadcast_to_all(self, message: dict):
+        for user_id in list(self.active_connections.keys()):
+            await self.send_to_user(user_id, message)
+
+manager = ConnectionManager()
+
+# WebSocket endpoint for real-time updates
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            # Keep connection alive and handle incoming messages
+            data = await websocket.receive_text()
+            try:
+                message = json.loads(data)
+                # Handle different message types
+                if message.get("type") == "ping":
+                    await websocket.send_json({"type": "pong", "timestamp": datetime.now().isoformat()})
+                elif message.get("type") == "typing":
+                    # Could broadcast typing indicators to other users in the future
+                    pass
+            except json.JSONDecodeError:
+                pass
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, user_id)
+
+# Enhanced note creation with real-time updates
+async def notify_note_change(user_id: int, action: str, note_data: dict):
+    """Notify connected clients about note changes"""
+    await manager.send_to_user(user_id, {
+        "type": "note_update",
+        "action": action,  # "created", "updated", "deleted"
+        "note": note_data,
+        "timestamp": datetime.now().isoformat()
+    })
+
+# Update existing endpoints to include real-time notifications
+@app.post("/api/notes/realtime")
+async def api_create_note_realtime(
+    note_data: dict = Body(...),
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new note with real-time notifications"""
+    title = note_data.get('title', '').strip()
+    content = note_data.get('content', '').strip()
+    tags = note_data.get('tags', '').strip()
+    
+    if not content:
+        raise HTTPException(status_code=400, detail="Content is required")
+    
+    # Generate title if not provided
+    if not title:
+        try:
+            title = ollama_generate_title(content)
+            if not title or title.strip() == "":
+                title = content[:50] + ("..." if len(content) > 50 else "")
+        except:
+            title = content[:50] + ("..." if len(content) > 50 else "")
+    
+    conn = get_conn()
+    c = conn.cursor()
+    
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("""
+            INSERT INTO notes (title, body, content, tags, type, timestamp, user_id, status) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (title, content, content, tags, 'text', now, current_user.id, 'active'))
+        
+        note_id = c.lastrowid
+        conn.commit()
+        
+        note_response = {
+            "id": note_id,
+            "title": title,
+            "content": content,
+            "tags": tags,
+            "created_at": now,
+            "status": "created"
+        }
+        
+        # Send real-time notification
+        await notify_note_change(current_user.id, "created", note_response)
+        
+        # Queue for AI processing if available
+        if background_tasks:
+            background_tasks.add_task(process_note, note_id)
+        
+        return note_response
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create note: {str(e)}")
+    finally:
+        conn.close()
+
+@app.put("/api/notes/{note_id}/realtime")
+async def api_update_note_realtime(
+    note_id: int,
+    note_data: dict = Body(...),
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Update a specific note with real-time notifications"""
+    conn = get_conn()
+    c = conn.cursor()
+    
+    try:
+        # Verify note exists and belongs to user
+        existing = c.execute(
+            "SELECT id FROM notes WHERE id = ? AND user_id = ?",
+            (note_id, current_user.id)
+        ).fetchone()
+        
+        if not existing:
+            raise HTTPException(status_code=404, detail="Note not found")
+        
+        title = note_data.get('title', '').strip()
+        content = note_data.get('content', '').strip()
+        tags = note_data.get('tags', '').strip()
+        
+        if not content:
+            raise HTTPException(status_code=400, detail="Content is required")
+        
+        # Update note
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("""
+            UPDATE notes 
+            SET title = ?, content = ?, body = ?, tags = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+        """, (title, content, content, tags, now, note_id, current_user.id))
+        
+        conn.commit()
+        
+        note_response = {
+            "id": note_id,
+            "title": title,
+            "content": content,
+            "tags": tags,
+            "updated_at": now,
+            "status": "updated"
+        }
+        
+        # Send real-time notification
+        await notify_note_change(current_user.id, "updated", note_response)
+        
+        # Queue for AI processing if available
+        if background_tasks:
+            background_tasks.add_task(process_note, note_id)
+        
+        return note_response
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update note: {str(e)}")
+    finally:
+        conn.close()
+
+@app.delete("/api/notes/{note_id}/realtime")
+async def api_delete_note_realtime(note_id: int, current_user: User = Depends(get_current_user)):
+    """Delete a specific note with real-time notifications"""
+    conn = get_conn()
+    c = conn.cursor()
+    
+    try:
+        # Get note data before deletion for notification
+        note_row = c.execute(
+            "SELECT id, title FROM notes WHERE id = ? AND user_id = ?",
+            (note_id, current_user.id)
+        ).fetchone()
+        
+        if not note_row:
+            raise HTTPException(status_code=404, detail="Note not found")
+        
+        # Soft delete by updating status
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("""
+            UPDATE notes 
+            SET status = 'deleted', updated_at = ?
+            WHERE id = ? AND user_id = ?
+        """, (now, note_id, current_user.id))
+        
+        conn.commit()
+        
+        # Send real-time notification
+        await notify_note_change(current_user.id, "deleted", {
+            "id": note_id,
+            "title": note_row[1] if note_row else f"Note {note_id}",
+            "status": "deleted"
+        })
+        
+        return {"status": "deleted", "id": note_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete note: {str(e)}")
+    finally:
+        conn.close()
+
+# System status endpoint for monitoring
+@app.get("/api/system/status")
+async def get_system_status():
+    """Get system status including WebSocket connections"""
+    total_connections = sum(len(connections) for connections in manager.active_connections.values())
+    return {
+        "status": "healthy",
+        "websocket_connections": total_connections,
+        "connected_users": len(manager.active_connections),
+        "timestamp": datetime.now().isoformat()
+    }
 
 # Route to serve the new dashboard
 @app.get("/dashboard/v2")
