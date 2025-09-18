@@ -1,0 +1,83 @@
+# Second Brain - Main Application Service
+# Systemd service definition for the FastAPI web application
+
+[Unit]
+Description=Second Brain - Knowledge Management System
+Documentation=https://github.com/dhouchin/second_brain
+After=network.target network-online.target
+Wants=network-online.target
+Requires=postgresql.service redis.service
+After=postgresql.service redis.service
+
+[Service]
+Type=exec
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/secondbrain
+Environment=PATH=/var/www/secondbrain/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/var/www/secondbrain
+Environment=ENVIRONMENT=production
+Environment=LOG_LEVEL=INFO
+EnvironmentFile=-/etc/secondbrain/production.env
+
+# Main application command
+ExecStart=/var/www/secondbrain/.venv/bin/gunicorn \
+    --config /var/www/secondbrain/deploy/gunicorn/gunicorn.conf.py \
+    --log-config /var/www/secondbrain/deploy/gunicorn/logging.conf \
+    app:app
+
+# Health check command
+ExecStartPost=/bin/sleep 10
+ExecStartPost=/bin/curl -f http://localhost:8082/health || exit 1
+
+# Graceful reload
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=5
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/secondbrain /var/log/secondbrain /var/run/secondbrain /tmp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+PrivateDevices=true
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=200%
+TasksMax=4096
+LimitNOFILE=65536
+
+# Process management
+PIDFile=/var/run/secondbrain/gunicorn.pid
+RuntimeDirectory=secondbrain
+RuntimeDirectoryMode=0755
+LogsDirectory=secondbrain
+LogsDirectoryMode=0755
+StateDirectory=secondbrain
+StateDirectoryMode=0755
+CacheDirectory=secondbrain
+CacheDirectoryMode=0755
+
+# Standard I/O
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=secondbrain
+
+[Install]
+WantedBy=multi-user.target

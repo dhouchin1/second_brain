@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Second Brain",
-  "version": "1.0.0",
-  "description": "Capture web content to your Second Brain with AI processing",
+  "version": "1.0.1",
+  "description": "Capture web content to your personal Second Brain with AI-powered processing, summarization, and intelligent organization.",
   "permissions": [
     "activeTab",
     "contextMenus",
@@ -10,14 +10,14 @@
     "scripting",
     "notifications",
     "offscreen",
-    "alarms",
-    "favicon"
+    "alarms"
   ],
   "host_permissions": [
-    "http://localhost:8082/*",
-    "http://localhost:8084/*",
-    "https://*.secondbrain.ai/*",
-    "https://*/*"
+    "*://*/*"
+  ],
+  "optional_host_permissions": [
+    "http://localhost:*/*",
+    "https://*.secondbrain.ai/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -1,292 +1,431 @@
-{% extends 'base.html' %}
-{% block title %}Advanced Search – Second Brain{% endblock %}
-{% block head_extra %}
-  <link rel="stylesheet" href="/static/css/design-system.css">
-  <link rel="stylesheet" href="/static/css/components.css">
-  <link rel="stylesheet" href="/static/css/advanced-search.css">
-  <style>
-    body { background: #0f172a; font-family: 'Inter', Arial, sans-serif; }
-    ::-webkit-scrollbar { width: 8px; background: #0b1220; }
-    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 6px; }
-    .card-surface { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); }
-    .muted { color: #a5b4fc; opacity: .8; }
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+    <title>Advanced Search - Second Brain</title>
     
-    /* Consistent font sizing to match dashboard */
-    .search-title { font-size: 1.5rem; font-weight: 700; color: #e2e8f0; margin-bottom: 0.5rem; }
-    .search-subtitle { font-size: 0.875rem; color: #94a3b8; margin-bottom: 2rem; }
-    .section-title { font-size: 0.875rem; font-weight: 600; color: #cbd5e1; margin-bottom: 1rem; }
-    .filter-label { font-size: 0.75rem; font-weight: 500; color: #94a3b8; margin-bottom: 0.5rem; display: block; }
+    <!-- Mobile-first meta tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Second Brain">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="msapplication-navbutton-color" content="#3b82f6">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     
-    /* Result cards matching dashboard style */
-    .result-card {
-      background: rgba(255,255,255,.04);
-      border: 1px solid rgba(255,255,255,.08);
-      border-radius: 0.75rem;
-      padding: 1rem;
-      transition: all 0.2s ease;
-      cursor: pointer;
-    }
-    .result-card:hover {
-      background: rgba(255,255,255,.06);
-      border-color: rgba(255,255,255,.15);
-      transform: translateY(-1px);
-    }
-    .result-title { font-size: 0.875rem; font-weight: 600; color: #e2e8f0; margin-bottom: 0.5rem; }
-    .result-meta { font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.5rem; }
-    .result-snippet { font-size: 0.8125rem; color: #cbd5e1; line-height: 1.4; }
-    .result-tags { margin-top: 0.5rem; }
-    .result-tag {
-      font-size: 0.6875rem;
-      background: rgba(99, 102, 241, 0.1);
-      color: #a5b4fc;
-      padding: 0.125rem 0.5rem;
-      border-radius: 9999px;
-      margin-right: 0.25rem;
-    }
-    .score-badge {
-      font-size: 0.6875rem;
-      background: rgba(34, 197, 94, 0.1);
-      color: #86efac;
-      padding: 0.125rem 0.375rem;
-      border-radius: 0.25rem;
-      font-weight: 500;
-    }
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     
-    /* Search suggestions styling */
-    .search-suggestions {
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
-      z-index: 50;
-      opacity: 0;
-      visibility: hidden;
-      transform: translateY(-8px);
-      transition: all 0.2s ease-out;
-      margin-top: 4px;
-    }
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/static/manifest.json">
     
-    .search-suggestions.visible {
-      opacity: 1;
-      visibility: visible;
-      transform: translateY(0);
-    }
-    
-    .suggestions-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      max-height: 320px;
-      overflow-y: auto;
-    }
-    
-    .suggestion-item {
-      transition: background-color 0.15s ease;
-    }
-    
-    .suggestion-item:hover {
-      background-color: #475569 !important;
-    }
-    
-    /* Scrollbar styling for suggestions */
-    .suggestions-list::-webkit-scrollbar {
-      width: 6px;
-    }
-    
-    .suggestions-list::-webkit-scrollbar-track {
-      background: #1e293b;
-    }
-    
-    .suggestions-list::-webkit-scrollbar-thumb {
-      background: #475569;
-      border-radius: 3px;
-    }
-    
-    .suggestions-list::-webkit-scrollbar-thumb:hover {
-      background: #64748b;
-    }
-  </style>
-{% endblock %}
-{% block body_class %}min-h-screen text-slate-100 bg-slate-900{% endblock %}
-{% block content %}
-  
-  <!-- Compact header consistent with dashboard -->
-  <header class="w-full py-4 max-w-6xl mx-auto px-6">
-    <h1 class="search-title">Advanced Search</h1>
-    <p class="search-subtitle">Find notes using hybrid text + semantic search with advanced filters</p>
-  </header>
+    <!-- Static CSS Files -->
+    <link rel="stylesheet" href="/static/css/design-system.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/dashboard-enhanced.css">
+    <link rel="stylesheet" href="/static/css/advanced-search.css">
 
-  <!-- Main Content - 2-Column Layout like Dashboard -->
-  <section class="w-full max-w-6xl mx-auto px-6 mb-4">
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      
-      <!-- Left Column: Search Interface (4 columns) -->
-      <div class="lg:col-span-4">
-        <div class="card-surface rounded-xl p-4 space-y-4">
-          
-          <!-- Search Input -->
-          <div class="space-y-2">
-            <label class="filter-label">Search Query</label>
-            <div class="relative">
-              <input type="text" id="search-input" 
-                     placeholder="Search your notes..." 
-                     class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-2.5 pr-12 
-                            placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none text-sm">
-              <button id="search-button" 
-                      class="absolute right-2 top-1/2 transform -translate-y-1/2 
-                             bg-indigo-500 hover:bg-indigo-600 text-white p-2 rounded-md transition">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <path d="m21 21-4.35-4.35"></path>
-                </svg>
-              </button>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'sans': ['Inter', 'system-ui', 'sans-serif']
+                    },
+                    colors: {
+                        discord: {
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb'
+                        },
+                        notion: {
+                            400: '#60a5fa',
+                            500: '#3b82f6',
+                            600: '#2563eb'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Keep only minimal helpers unique to this page */
+        .search-title { font-size: 1.5rem; font-weight: 700; color: #1e293b; margin-bottom: 0.25rem; }
+        .search-subtitle { font-size: 0.875rem; color: #64748b; margin-bottom: 0; }
+        .section-title { font-size: 0.875rem; font-weight: 600; color: #334155; margin-bottom: 0.5rem; }
+        .filter-label { font-size: 0.75rem; font-weight: 500; color: #64748b; margin-bottom: 0.5rem; display: block; }
+    </style>
+</head>
+
+<body class="h-full bg-slate-50 font-sans text-slate-700" data-mobile-interface="enabled" style="overflow-x: hidden; overscroll-behavior: none;">
+    <!-- App Container -->
+    <div id="app" class="flex h-full overflow-hidden">
+        
+        <!-- Sidebar Navigation - Obsidian/Discord inspired -->
+        <aside id="sidebar" class="w-64 bg-slate-100 border-r border-slate-250/80 flex flex-col shadow-large lg:relative fixed left-0 top-0 h-full z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+            <!-- Logo Section -->
+            <div class="flex items-center justify-between p-4 border-b border-slate-200/50">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-discord-500 to-discord-600 rounded-xl flex items-center justify-center shadow-medium">
+                        <span class="text-white text-lg font-semibold">🧠</span>
+                    </div>
+                    <div>
+                        <h1 class="font-bold text-slate-900">Second Brain</h1>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs text-slate-500">v2.0</span>
+                            <div class="w-2 h-2 status-online rounded-full"></div>
+                        </div>
+                    </div>
+                </div>
+                <button onclick="toggleSidebar()" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 transition-colors" aria-label="Toggle sidebar navigation">
+                    <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
             </div>
-            <div id="search-suggestions" class="search-suggestions relative z-50"></div>
-          </div>
 
-          <!-- Search Mode -->
-          <div class="space-y-2">
-            <label class="filter-label">Search Mode</label>
-            <div class="flex gap-2">
-              <button class="flex-1 px-3 py-2 rounded-lg bg-indigo-500 text-white text-xs font-medium search-filter active" 
-                      data-search-mode="hybrid">Hybrid</button>
-              <button class="flex-1 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium search-filter" 
-                      data-search-mode="fts">Text</button>
-              <button class="flex-1 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium search-filter" 
-                      data-search-mode="semantic">Semantic</button>
+            <!-- Navigation Menu -->
+            <nav class="flex-1 p-3 space-y-1 custom-scrollbar overflow-y-auto">
+                <!-- Main Navigation -->
+                <div class="space-y-1">
+                    <a href="/dashboard" class="nav-item flex items-center px-3 py-2.5 rounded-lg font-medium transition-all text-sm">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5a2 2 0 012-2h2a2 2 0 012 2v2H8V5z"></path>
+                        </svg>
+                        Dashboard
+                    </a>
+                    
+                    <a href="/notes" class="nav-item flex items-center px-3 py-2.5 rounded-lg font-medium transition-all text-sm">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                        </svg>
+                        Notes
+                        <span class="ml-auto bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full text-xs font-medium">23</span>
+                    </a>
+                    
+                    <a href="/search" class="nav-item active flex items-center px-3 py-2.5 rounded-lg font-medium transition-all text-sm">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        Search
+                    </a>
+                    
+                    <a href="/analytics" class="nav-item flex items-center px-3 py-2.5 rounded-lg font-medium transition-all text-sm">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                        Analytics
+                        <span class="ml-auto">📊</span>
+                    </a>
+                    
+                    <a href="/discord" class="nav-item flex items-center px-3 py-2.5 rounded-lg font-medium transition-all text-sm">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                        </svg>
+                        Discord Bot
+                        <div class="ml-auto flex items-center space-x-1">
+                            <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                            <span>🤖</span>
+                        </div>
+                    </a>
+                </div>
+
+                <!-- Tools Section -->
+                <div class="border-t border-slate-200/60 my-4"></div>
+                <div class="space-y-1">
+                    <p class="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Tools</p>
+                    
+                    <button class="nav-item flex items-center w-full px-3 py-2.5 rounded-lg font-medium transition-all text-sm text-left">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        Upload Files
+                    </button>
+                    
+                    <button class="nav-item flex items-center w-full px-3 py-2.5 rounded-lg font-medium transition-all text-sm text-left">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                        </svg>
+                        Voice Note
+                    </button>
+                    
+                    <button class="nav-item flex items-center w-full px-3 py-2.5 rounded-lg font-medium transition-all text-sm text-left">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        Settings
+                    </button>
+                </div>
+            </nav>
+
+            <!-- User Profile Section -->
+            <div class="p-3 border-t border-slate-200/60 mt-auto">
+                <div class="flex items-center space-x-3 p-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer notion-hover">
+                    <div class="w-8 h-8 bg-gradient-to-br from-notion-500 to-notion-600 rounded-full flex items-center justify-center">
+                        <span class="text-white text-sm font-medium">{{ current_user.username[0].upper() if current_user and current_user.username else 'U' }}</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-slate-900 truncate">{{ current_user.username if current_user and current_user.username else 'User' }}</p>
+                        <p class="text-xs text-slate-500">Online</p>
+                    </div>
+                    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"></path>
+                    </svg>
+                </div>
             </div>
-          </div>
+        </aside>
 
-          <!-- Type Filters -->
-          <div class="space-y-2">
-            <label class="filter-label">Note Types</label>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-type-filter="text" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Text</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-type-filter="audio" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Audio</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-type-filter="apple" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Shortcuts</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-type-filter="meeting" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Meeting</span>
-              </label>
+        <!-- Sidebar Overlay for Mobile -->
+        <div id="sidebarOverlay" class="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden opacity-0 pointer-events-none transition-opacity duration-300 ease-in-out"></div>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 flex flex-col overflow-hidden">
+            <!-- Enhanced Header -->
+            <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <button onclick="toggleSidebar()" class="lg:hidden p-2 rounded-lg hover:bg-slate-100 transition-colors" aria-label="Toggle sidebar navigation">
+                        <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                    <div>
+                        <h1 class="search-title">Advanced Search</h1>
+                        <p class="search-subtitle">Search through your notes, files, and AI-generated content with advanced filters</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="theme-toggle" class="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-medium" aria-label="Toggle theme">Light</button>
+                </div>
+            </header>
+            
+            <!-- Search Content -->
+            <div class="flex-1 p-6 overflow-auto bg-slate-50">
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        
+                        <!-- Left Column: Search Interface (4 columns) -->
+                        <div class="lg:col-span-4">
+                            <div class="glass rounded-2xl p-4 shadow-large space-y-4">
+                                
+                                <!-- Search Input -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Search Query</label>
+                                    <div class="relative">
+                                        <input type="text" id="search-input" 
+                                               placeholder="Search your notes..." 
+                                               class="w-full rounded-xl border border-slate-300 bg-white text-slate-700 px-4 py-3 pr-12 
+                                                      placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm">
+                                        <button id="search-button" 
+                                                class="absolute right-2 top-1/2 transform -translate-y-1/2 transition">
+                                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <circle cx="11" cy="11" r="8"></circle>
+                                                <path d="m21 21-4.35-4.35"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div id="search-suggestions" class="search-suggestions relative z-50"></div>
+                                </div>
+                                
+                                <!-- Search Mode -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Search Mode</label>
+                                    <div class="flex gap-2">
+                                        <button class="flex-1 px-3 py-2 rounded-lg bg-blue-500 text-white text-xs font-medium search-filter active" 
+                                                data-search-mode="hybrid">Hybrid</button>
+                                        <button class="flex-1 px-3 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium search-filter" 
+                                                data-search-mode="fts">Text</button>
+                                        <button class="flex-1 px-3 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium search-filter" 
+                                                data-search-mode="semantic">Semantic</button>
+                                    </div>
+                                </div>
+                                
+                                <!-- Type Filters -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Note Types</label>
+                                    <div class="grid grid-cols-2 gap-2 text-xs">
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-type-filter="text" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Text</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-type-filter="audio" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Audio</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-type-filter="apple" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Shortcuts</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-type-filter="meeting" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Meeting</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <!-- Status Filters -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Processing Status</label>
+                                    <div class="grid grid-cols-3 gap-2 text-xs">
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-status-filter="complete" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Complete</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-status-filter="pending" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Pending</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 cursor-pointer">
+                                            <input type="checkbox" data-status-filter="error" class="rounded border-slate-300 bg-white text-blue-500 focus:ring-blue-400">
+                                            <span class="text-slate-600">Error</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <!-- Date Range -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Date Range</label>
+                                    <div class="grid grid-cols-1 gap-2">
+                                        <input type="date" id="date-start" 
+                                               class="w-full rounded-lg border border-slate-300 bg-white text-slate-700 px-3 py-2 text-xs
+                                                      focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                                        <input type="date" id="date-end"
+                                               class="w-full rounded-lg border border-slate-300 bg-white text-slate-700 px-3 py-2 text-xs
+                                                      focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                                    </div>
+                                </div>
+                                
+                                <!-- Tags -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Tags</label>
+                                    <input type="text" id="tag-filter" placeholder="Add tag (press Enter)" 
+                                           class="w-full rounded-lg border border-slate-300 bg-white text-slate-700 px-3 py-2 text-xs
+                                                  placeholder:text-slate-400 focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                                    <div id="active-tag-filters" class="flex flex-wrap gap-1"></div>
+                                </div>
+                                
+                                <!-- Minimum Score -->
+                                <div class="space-y-2">
+                                    <label class="filter-label">Min Score <span id="min-score-value" class="text-blue-600 font-medium">0.10</span></label>
+                                    <input type="range" id="min-score" min="0" max="1" step="0.05" value="0.10" 
+                                           class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                                </div>
+                                
+                                <!-- Semantic Search Status -->
+                                <div id="semantic-status" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                    <div class="flex items-center gap-2 text-xs">
+                                        <svg width="14" height="14" fill="currentColor" class="text-amber-600" viewBox="0 0 16 16">
+                                            <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+                                        </svg>
+                                        <span class="text-amber-800">Semantic search unavailable</span>
+                                    </div>
+                                    <button id="generate-embeddings-btn" 
+                                            class="mt-2 w-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-3 py-2 rounded-lg transition">
+                                        Generate Embeddings
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Right Column: Search Results (8 columns) -->
+                        <div class="lg:col-span-8">
+                            <div class="space-y-4">
+                                <!-- Results Header -->
+                                <div class="flex items-center justify-between">
+                                    <h2 class="section-title" id="results-title">Search Results</h2>
+                                    <div id="results-meta" class="text-xs text-slate-500"></div>
+                                </div>
+                                
+                                <!-- Loading State -->
+                                <div id="search-loading" class="hidden text-center py-12">
+                                    <div class="inline-flex items-center gap-2 text-slate-500">
+                                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
+                                            <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" class="opacity-75"></path>
+                                        </svg>
+                                        <span class="text-sm">Searching...</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- Results Grid -->
+                                <div id="search-results" class="grid grid-cols-1 gap-3"></div>
+                                
+                                <!-- Empty State -->
+                                <div id="empty-state" class="hidden text-center py-12">
+                                    <div class="text-slate-500 space-y-2">
+                                        <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24" class="mx-auto opacity-50">
+                                            <circle cx="11" cy="11" r="8"></circle>
+                                            <path d="m21 21-4.35-4.35"></path>
+                                        </svg>
+                                        <p class="text-sm">No results found</p>
+                                        <p class="text-xs opacity-75">Try adjusting your search query or filters</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
-
-          <!-- Status Filters -->
-          <div class="space-y-2">
-            <label class="filter-label">Processing Status</label>
-            <div class="grid grid-cols-3 gap-2 text-xs">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-status-filter="complete" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Complete</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-status-filter="pending" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Pending</span>
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" data-status-filter="error" class="rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-400">
-                <span class="text-slate-300">Error</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Date Range -->
-          <div class="space-y-2">
-            <label class="filter-label">Date Range</label>
-            <div class="grid grid-cols-1 gap-2">
-              <input type="date" id="date-start" 
-                     class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-3 py-2 text-xs
-                            focus:ring-2 focus:ring-indigo-400 focus:outline-none">
-              <input type="date" id="date-end"
-                     class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-3 py-2 text-xs
-                            focus:ring-2 focus:ring-indigo-400 focus:outline-none">
-            </div>
-          </div>
-
-          <!-- Tags -->
-          <div class="space-y-2">
-            <label class="filter-label">Tags</label>
-            <input type="text" id="tag-filter" placeholder="Add tag (press Enter)" 
-                   class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-3 py-2 text-xs
-                          placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none">
-            <div id="active-tag-filters" class="flex flex-wrap gap-1"></div>
-          </div>
-
-          <!-- Minimum Score -->
-          <div class="space-y-2">
-            <label class="filter-label">Min Score <span id="min-score-value" class="text-indigo-400 font-medium">0.10</span></label>
-            <input type="range" id="min-score" min="0" max="1" step="0.05" value="0.10" 
-                   class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer">
-          </div>
-
-          <!-- Semantic Search Status -->
-          <div id="semantic-status" class="hidden bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-            <div class="flex items-center gap-2 text-xs">
-              <svg width="14" height="14" fill="currentColor" class="text-amber-400" viewBox="0 0 16 16">
-                <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
-              </svg>
-              <span class="text-amber-300">Semantic search unavailable</span>
-            </div>
-            <button id="generate-embeddings-btn" 
-                    class="mt-2 w-full bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-3 py-2 rounded-lg transition">
-              Generate Embeddings
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right Column: Search Results (8 columns) -->
-      <div class="lg:col-span-8">
-        <div class="space-y-4">
-          <!-- Results Header -->
-          <div class="flex items-center justify-between">
-            <h2 class="section-title" id="results-title">Search Results</h2>
-            <div id="results-meta" class="text-xs text-slate-400"></div>
-          </div>
-          
-          <!-- Loading State -->
-          <div id="search-loading" class="hidden text-center py-12">
-            <div class="inline-flex items-center gap-2 text-slate-400">
-              <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"></circle>
-                <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" class="opacity-75"></path>
-              </svg>
-              <span class="text-sm">Searching...</span>
-            </div>
-          </div>
-          
-          <!-- Results Grid -->
-          <div id="search-results" class="grid grid-cols-1 gap-3"></div>
-          
-          <!-- Empty State -->
-          <div id="empty-state" class="hidden text-center py-12">
-            <div class="text-slate-400 space-y-2">
-              <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24" class="mx-auto opacity-50">
-                <circle cx="11" cy="11" r="8"></circle>
-                <path d="m21 21-4.35-4.35"></path>
-              </svg>
-              <p class="text-sm">No results found</p>
-              <p class="text-xs opacity-75">Try adjusting your search query or filters</p>
-            </div>
-          </div>
-        </div>
-      </div>
+        </main>
     </div>
-  </section>
-  <script src="/static/js/advanced-search.js"></script>
-  <script>
-    // Initialize Advanced Search logic
-    document.addEventListener('DOMContentLoaded', function(){
-      try { window.advancedSearch = new AdvancedSearchInterface(); } catch(e) { console.error('AdvancedSearch init failed', e); }
-    });
-  </script>
-{% endblock %}
+    
+    <script src="/static/js/advanced-search.js"></script>
+    <script>
+        // Theme handling for Advanced Search: default to light, toggleable
+        (function(){
+            const applyTheme = (mode) => {
+                document.body.classList.remove('theme-light','theme-dark');
+                document.body.classList.add(mode === 'dark' ? 'theme-dark' : 'theme-light');
+                const btn = document.getElementById('theme-toggle');
+                if (btn) btn.textContent = mode === 'dark' ? 'Dark' : 'Light';
+            };
+            const saved = localStorage.getItem('sb_theme') || 'light';
+            applyTheme(saved);
+            const btn = document.getElementById('theme-toggle');
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    const current = document.body.classList.contains('theme-dark') ? 'dark' : 'light';
+                    const next = current === 'dark' ? 'light' : 'dark';
+                    localStorage.setItem('sb_theme', next);
+                    applyTheme(next);
+                });
+            }
+        })();
+
+        let sidebarOpen = false;
+        
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            sidebarOpen = !sidebarOpen;
+            
+            if (sidebarOpen) {
+                sidebar.classList.remove('-translate-x-full');
+                overlay.classList.remove('opacity-0', 'pointer-events-none');
+                overlay.classList.add('opacity-100', 'pointer-events-auto');
+            } else {
+                sidebar.classList.add('-translate-x-full');
+                overlay.classList.add('opacity-0', 'pointer-events-none');
+                overlay.classList.remove('opacity-100', 'pointer-events-auto');
+            }
+        }
+        
+        // Close sidebar when clicking overlay
+        document.getElementById('sidebarOverlay')?.addEventListener('click', toggleSidebar);
+        
+        // Initialize Advanced Search logic
+        document.addEventListener('DOMContentLoaded', function(){
+            try { 
+                window.advancedSearch = new AdvancedSearchInterface(); 
+            } catch(e) { 
+                console.error('AdvancedSearch init failed', e); 
+            }
+        });
+    </script>
+</body>
+</html>

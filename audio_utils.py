@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 import subprocess
 import time
@@ -12,17 +14,33 @@ except Exception:
     _VOSK_AVAILABLE = False
 
 
-def _convert_to_wav_16k_mono(audio_path: Path) -> Path | None:
-    """Convert source audio to 16kHz mono PCM WAV using ffmpeg."""
+def _convert_to_wav_16k_mono(audio_path: Path) -> Optional[Path]:
+    """Convert source audio to browser-compatible WAV format."""
     wav_path = audio_path.with_suffix('.converted.wav')
-    # Add CPU throttling to ffmpeg too
+    # Create two versions: one for whisper (16kHz) and one for browser playback (44.1kHz)
+    playback_wav_path = audio_path.with_suffix('.playback.wav')
+
+    # Browser-compatible version (44.1kHz stereo, higher quality for playback)
+    playback_cmd = [
+        "nice", "-n", "19",
+        "ffmpeg", "-y", "-i", str(audio_path),
+        "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le", str(playback_wav_path)
+    ]
+
+    # Whisper version (16kHz mono for processing)
     ffmpeg_cmd = [
         "nice", "-n", "19",  # Lower priority for ffmpeg too
         "ffmpeg", "-y", "-i", str(audio_path),
         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav_path)
     ]
     try:
-        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=60)  # 1 minute timeout
+        # Create playback version first (browser-compatible)
+        playback_result = subprocess.run(playback_cmd, capture_output=True, timeout=60)
+        if playback_result.returncode != 0:
+            print("ffmpeg failed to convert audio for playback:", playback_result.stderr)
+
+        # Create whisper version (for transcription)
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=60)
         if result.returncode != 0:
             print("ffmpeg failed to convert audio:", result.stderr)
             return None

@@ -193,8 +193,7 @@
         function msg(t){ const li=document.createElement('li'); li.textContent=t; msgs.appendChild(li); }
         let attempts=0, es;
         async function connect(){
-          const tok = (window.SSE_TOKEN && typeof window.SSE_TOKEN === 'string') ? ('?token=' + encodeURIComponent(window.SSE_TOKEN)) : '';
-          es = new EventSource('/api/status/stream/' + id + tok);
+          es = new EventSource(`/api/status/stream/${id}`, { withCredentials: true });
           es.onmessage = (evt)=>{
             try {
               const data = JSON.parse(evt.data);
@@ -204,16 +203,10 @@
               if (data.completed || data.stage==='complete') { setTimeout(()=>location.reload(), 600); }
             } catch(e){}
           };
-          es.onerror = async ()=>{
+          es.onerror = ()=>{
             try { es.close(); } catch{}
             attempts += 1; const d = attempts===1?1000:attempts===2?2000:attempts===3?5000:10000;
-            try {
-              const r = await fetch('/api/sse-token', { credentials: 'same-origin' });
-              if (r.ok) {
-                const j = await r.json();
-                if (j && j.token) window.SSE_TOKEN = j.token;
-              }
-            } catch {}
+            if (attempts >= 5) { msg('Connection lost. Refresh the page to continue tracking.'); return; }
             setTimeout(()=>{ connect(); }, d);
           };
         }
@@ -223,11 +216,11 @@
     {% endif %}
 
     <!-- Note Metadata -->
-    <div class="note-metadata">
-      <div class="metadata-item">
-        <h4 class="body-small font-semibold" style="color: var(--text-tertiary); margin: 0 0 var(--space-1) 0;">Type</h4>
-        <div class="flex items-center gap-2">
-          {% if note.type == 'audio' %}
+      <div class="note-metadata">
+        <div class="metadata-item">
+          <h4 class="body-small font-semibold" style="color: var(--text-tertiary); margin: 0 0 var(--space-1) 0;">Type</h4>
+          <div class="flex items-center gap-2">
+            {% if note.type == 'audio' %}
             <i data-lucide="mic" style="color: var(--color-warning-500);"></i>
             <span class="badge badge-warning">Audio Note</span>
           {% elif note.type == 'apple' %}
@@ -238,6 +231,15 @@
             <span class="badge badge-primary">Text Note</span>
           {% endif %}
         </div>
+        {% if note.file_metadata_json and note.file_metadata_json.manifest_path %}
+        <div class="metadata-item">
+          <h4 class="body-small font-semibold" style="color: var(--text-tertiary); margin: 0 0 var(--space-1) 0;">Snapshot</h4>
+          <a href="/snapshot/{{ note.id }}" class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-indigo-600 text-white text-sm hover:bg-indigo-500 transition">
+            <i data-lucide="copy"></i>
+            View Snapshot
+          </a>
+        </div>
+        {% endif %}
       </div>
       
       <div class="metadata-item">

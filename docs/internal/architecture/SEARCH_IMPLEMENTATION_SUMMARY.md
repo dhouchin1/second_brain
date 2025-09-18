@@ -2,12 +2,12 @@
 
 **Project**: Second Brain - Advanced Search System  
 **Phase**: Phase 1 - Priority 3: Search Enhancements  
-**Status**: ✅ **COMPLETED**  
-**Date**: August 27, 2025  
+**Status**: ⚠️ Needs Verification  
+**Date**: Reassessed September 2025  
 
 ## Implementation Overview
 
-Successfully implemented a comprehensive hybrid search system that combines traditional full-text search (FTS5) with AI-powered semantic similarity search, providing users with powerful and intelligent content discovery capabilities.
+Hybrid search work is partially landed, but reranking, analytics, and regression tests are still on the backlog. See the outstanding work list below.
 
 ## ✅ Completed Components
 
@@ -37,6 +37,14 @@ Successfully implemented a comprehensive hybrid search system that combines trad
 - Advanced result ranking with multiple factors
 - Search analytics and performance tracking
 - Support for multiple search modes: FTS-only, Semantic-only, Hybrid
+
+---
+
+## ❗ Outstanding Work
+- [ ] Productionise cross-encoder reranking / RRF pipeline.
+- [ ] Backfill and migrate embeddings for legacy notes.
+- [ ] Add automated tests and load benchmarks.
+- [ ] Expose configuration in admin UI and document ops runbooks.
 
 ### 5. Advanced Search API (`search_api.py`)
 - **REST API endpoints** for all search functionality

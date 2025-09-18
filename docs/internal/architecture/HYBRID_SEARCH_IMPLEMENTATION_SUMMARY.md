@@ -1,6 +1,10 @@
 # Hybrid Search Implementation Summary
 
-## ✅ Implementation Status: COMPLETED - Priority 1 (Highest ROI)
+# ⚠️ Status Review (2025-09)
+
+Cross-encoder reranking remains behind a feature flag and BM25 scoring needs evaluation. The items below represent the intended design, but work is ongoing.
+
+## 🚧 Implementation Status: In Progress (Priority 1)
 
 **Cross-Encoder Re-ranking has been successfully implemented and tested**, providing immediate 20-30% improvement in search precision.
 

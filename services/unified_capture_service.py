@@ -374,7 +374,8 @@ class UnifiedCaptureService:
                 tags=tags,
                 processing_result=processing_result,
                 request=request,
-                config=config
+                config=config,
+                user_id=user_id
             )
             
             # Extract summary from first chunk or generate one
@@ -399,7 +400,7 @@ class UnifiedCaptureService:
             # Fall back to legacy processing
             return await self._handle_legacy_processing(request)
     
-    async def _handle_legacy_processing(self, request: UnifiedCaptureRequest) -> UnifiedCaptureResponse:
+    async def _handle_legacy_processing(self, request: UnifiedCaptureRequest, user_id: Optional[str] = None) -> UnifiedCaptureResponse:
         """
         Handle capture using legacy processing methods for backward compatibility.
         """
@@ -421,7 +422,7 @@ class UnifiedCaptureService:
         elif request.content_type == CaptureContentType.AUDIO:
             return await self._handle_audio_capture(request)
         else:
-            return await self._handle_text_capture(request)
+            return await self._handle_text_capture(request, user_id)
     
     def _map_content_type(self, capture_type: CaptureContentType) -> PipelineContentType:
         """Map capture content type to pipeline content type."""
@@ -503,7 +504,8 @@ class UnifiedCaptureService:
         tags: List[str],
         processing_result,
         request: UnifiedCaptureRequest,
-        config
+        config,
+        user_id: Optional[str] = None
     ) -> int:
         """Save note with enhanced metadata from processing pipeline."""
         from config import settings
@@ -561,15 +563,16 @@ class UnifiedCaptureService:
             
             # Insert new note
             cursor.execute("""
-                INSERT INTO notes (title, body, tags, metadata, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (title, body, tags, metadata, created_at, updated_at, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
                 content,
                 tags_str,
                 json.dumps(enhanced_metadata),
                 datetime.now().isoformat(),
-                datetime.now().isoformat()
+                datetime.now().isoformat(),
+                int(user_id) if user_id else None
             ))
             
             note_id = cursor.lastrowid
@@ -795,7 +798,7 @@ class UnifiedCaptureService:
                         success=True,
                         note_id=result.get("note_id"),
                         title=result.get("title"),
-                        content_preview=result.get("content", "")[:200],
+                        content_preview=(result.get("content_preview") or "")[:200],
                         tags=result.get("tags", []),
                         source_service="web_ingestion"
                     )
@@ -942,7 +945,7 @@ class UnifiedCaptureService:
                 source_service="unified_capture_audio"
             )
     
-    async def _handle_text_capture(self, request: UnifiedCaptureRequest) -> UnifiedCaptureResponse:
+    async def _handle_text_capture(self, request: UnifiedCaptureRequest, user_id: Optional[str] = None) -> UnifiedCaptureResponse:
         """Handle generic text capture requests."""
         try:
             # Generate title if not provided
@@ -1058,7 +1061,8 @@ class UnifiedCaptureService:
                     "capture_request": request_dict,
                     "has_ai_summary": bool(summary),
                     "action_items_count": len(action_items)
-                }
+                },
+                user_id=user_id
             )
             
             return UnifiedCaptureResponse(
@@ -1085,7 +1089,8 @@ class UnifiedCaptureService:
         title: str,
         content: str,
         tags: List[str],
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        user_id: Optional[str] = None
     ) -> int:
         """Save note to database with embeddings (legacy method for backward compatibility)."""
         from config import settings
@@ -1135,15 +1140,16 @@ class UnifiedCaptureService:
             
             # Insert note
             cursor.execute("""
-                INSERT INTO notes (title, body, tags, metadata, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (title, body, tags, metadata, created_at, updated_at, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
                 content,
                 tags_str,
                 json.dumps({**metadata, "content_hash": content_hash}),
                 datetime.now().isoformat(),
-                datetime.now().isoformat()
+                datetime.now().isoformat(),
+                int(user_id) if user_id else None
             ))
             
             note_id = cursor.lastrowid

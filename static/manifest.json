@@ -1,15 +1,17 @@
 {
-  "name": "Second Brain",
-  "short_name": "SecondBrain",
-  "description": "AI-powered knowledge management and note-taking system",
-  "start_url": "/",
+  "name": "Second Brain - Knowledge Management",
+  "short_name": "Second Brain",
+  "description": "AI-powered mobile-first knowledge management and note-taking platform with voice recording, search, and cross-platform sync",
+  "start_url": "/?utm_source=pwa",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#2563eb",
-  "orientation": "portrait-primary",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#0f1419",
+  "theme_color": "#6366f1",
+  "orientation": "any",
   "scope": "/",
   "lang": "en",
-  "categories": ["productivity", "utilities", "education"],
+  "dir": "ltr",
+  "categories": ["productivity", "utilities", "education", "lifestyle", "business"],
   "icons": [
     {
       "src": "/static/icons/icon-72x72.png",
@@ -64,38 +66,90 @@
     {
       "name": "Quick Note",
       "short_name": "New Note",
-      "description": "Create a new quick note",
-      "url": "/?action=quick-note",
+      "description": "Create a new quick note instantly",
+      "url": "/?action=quick-note&utm_source=shortcut",
       "icons": [
         {
           "src": "/static/icons/shortcut-note.png",
-          "sizes": "192x192"
+          "sizes": "192x192",
+          "type": "image/png"
         }
       ]
     },
     {
       "name": "Voice Note",
       "short_name": "Voice",
-      "description": "Record a voice note",
-      "url": "/?action=voice-note",
+      "description": "Record a voice note with AI transcription",
+      "url": "/?action=voice-note&utm_source=shortcut",
       "icons": [
         {
           "src": "/static/icons/shortcut-voice.png",
-          "sizes": "192x192"
+          "sizes": "192x192",
+          "type": "image/png"
         }
       ]
     },
     {
-      "name": "Search",
+      "name": "Search Notes",
       "short_name": "Search",
-      "description": "Search your notes",
-      "url": "/search",
+      "description": "Search your knowledge base",
+      "url": "/search?utm_source=shortcut",
       "icons": [
         {
           "src": "/static/icons/shortcut-search.png",
-          "sizes": "192x192"
+          "sizes": "192x192",
+          "type": "image/png"
         }
       ]
+    },
+    {
+      "name": "Camera Note",
+      "short_name": "Camera",
+      "description": "Capture and process images with OCR",
+      "url": "/?action=camera-note&utm_source=shortcut",
+      "icons": [
+        {
+          "src": "/static/icons/shortcut-camera.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/static/screenshots/mobile-dashboard.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Dashboard with note cards and search"
+    },
+    {
+      "src": "/static/screenshots/mobile-voice-recording.png", 
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Voice recording with real-time transcription"
+    },
+    {
+      "src": "/static/screenshots/tablet-dashboard.png",
+      "sizes": "1024x768",
+      "type": "image/png", 
+      "form_factor": "wide",
+      "label": "Tablet dashboard with sidebar navigation"
+    }
+  ],
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "handle_links": "preferred",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "protocol_handlers": [
+    {
+      "protocol": "web+secondbrain",
+      "url": "/capture?url=%s"
     }
   ],
   "related_applications": [],

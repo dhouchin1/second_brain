@@ -178,11 +178,11 @@ class AdvancedSearchInterface {
     }
 
     const ul = document.createElement('ul');
-    ul.className = 'suggestions-list bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto';
+    ul.className = 'suggestions-list bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto';
     
     uniqueSuggestions.forEach(suggestion => {
       const li = document.createElement('li');
-      li.className = 'suggestion-item flex items-center gap-3 px-4 py-3 hover:bg-slate-700 cursor-pointer border-b border-slate-700 last:border-b-0';
+      li.className = 'suggestion-item flex items-center gap-3 px-4 py-3 hover:bg-slate-100 cursor-pointer border-b border-slate-200 last:border-b-0';
       
       const icon = document.createElement('span');
       icon.className = 'text-sm';
@@ -192,30 +192,30 @@ class AdvancedSearchInterface {
       content.className = 'flex-1 min-w-0';
       
       const text = document.createElement('div');
-      text.className = 'text-sm text-slate-100 truncate';
+      text.className = 'text-sm text-slate-800 truncate';
       text.textContent = suggestion.text;
       content.appendChild(text);
       
       // Add additional info based on type
       if (suggestion.type === 'phrase' && suggestion.source) {
         const source = document.createElement('div');
-        source.className = 'text-xs text-slate-400 truncate mt-1';
+        source.className = 'text-xs text-slate-500 truncate mt-1';
         source.textContent = `from: ${suggestion.source}`;
         content.appendChild(source);
       } else if (suggestion.type === 'popular' && suggestion.count) {
         const count = document.createElement('div');
-        count.className = 'text-xs text-slate-400 mt-1';
+        count.className = 'text-xs text-slate-500 mt-1';
         count.textContent = `${suggestion.count} searches`;
         content.appendChild(count);
       } else if (suggestion.type === 'semantic' && suggestion.score) {
         const score = document.createElement('div');
-        score.className = 'text-xs text-slate-400 mt-1';
+        score.className = 'text-xs text-slate-500 mt-1';
         score.textContent = `similarity: ${suggestion.score}`;
         content.appendChild(score);
       }
       
       const typeLabel = document.createElement('span');
-      typeLabel.className = 'text-xs text-slate-500 capitalize px-2 py-1 bg-slate-900 rounded';
+      typeLabel.className = 'text-xs text-slate-600 capitalize px-2 py-1 bg-slate-100 rounded';
       typeLabel.textContent = suggestion.type || 'suggestion';
       
       li.appendChild(icon);
@@ -236,14 +236,14 @@ class AdvancedSearchInterface {
     const input = document.getElementById('search-input');
     if (input && input.value.trim().length > 2) {
       const enhanceButton = document.createElement('li');
-      enhanceButton.className = 'suggestion-item flex items-center gap-3 px-4 py-3 hover:bg-indigo-700 cursor-pointer border-t-2 border-indigo-500 bg-indigo-800';
+      enhanceButton.className = 'suggestion-item flex items-center gap-3 px-4 py-3 hover:bg-blue-100 cursor-pointer border-t-2 border-blue-200 bg-blue-50';
       enhanceButton.innerHTML = `
         <span class="text-sm">🧠</span>
         <div class="flex-1">
-          <div class="text-sm text-white font-medium">Enhance with AI</div>
-          <div class="text-xs text-indigo-200">Get smarter search suggestions</div>
+          <div class="text-sm text-blue-800 font-medium">Enhance with AI</div>
+          <div class="text-xs text-blue-700/70">Get smarter search suggestions</div>
         </div>
-        <span class="text-xs text-indigo-300">AI</span>
+        <span class="text-xs text-blue-700">AI</span>
       `;
       enhanceButton.addEventListener('click', () => this.showQueryEnhancement());
       ul.appendChild(enhanceButton);
@@ -267,10 +267,10 @@ class AdvancedSearchInterface {
 
     // Show loading state
     container.innerHTML = `
-      <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-lg p-4">
+      <div class="suggestion-panel rounded-lg shadow-lg p-4">
         <div class="flex items-center gap-3">
-          <div class="animate-spin h-4 w-4 border-2 border-indigo-400 border-t-transparent rounded-full"></div>
-          <div class="text-sm text-slate-300">AI is enhancing your query...</div>
+          <div class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+          <div class="text-sm">AI is enhancing your query...</div>
         </div>
       </div>
     `;
@@ -295,14 +295,14 @@ class AdvancedSearchInterface {
     if (!container) return;
 
     const div = document.createElement('div');
-    div.className = 'bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-80 overflow-y-auto';
+    div.className = 'suggestion-panel rounded-lg shadow-lg max-h-80 overflow-y-auto';
 
     let content = `
-      <div class="p-4 border-b border-slate-700">
+      <div class="p-4 suggestion-divider">
         <div class="flex items-center gap-2 mb-3">
           <span class="text-lg">🧠</span>
-          <h3 class="text-sm font-semibold text-slate-100">AI Query Enhancement</h3>
-          <span class="text-xs bg-indigo-600 text-white px-2 py-1 rounded">${enhancement.intent}</span>
+          <h3 class="text-sm font-semibold">AI Query Enhancement</h3>
+          <span class="text-xs intent-badge px-2 py-1 rounded">${enhancement.intent}</span>
         </div>
     `;
 
@@ -310,8 +310,8 @@ class AdvancedSearchInterface {
     if (enhancement.enhanced_query && enhancement.enhanced_query !== document.getElementById('search-input')?.value) {
       content += `
         <div class="mb-3">
-          <div class="text-xs text-slate-400 mb-1">Enhanced Query</div>
-          <button class="w-full text-left bg-indigo-900 hover:bg-indigo-800 p-2 rounded border border-indigo-600 text-sm text-slate-100" 
+          <div class="text-xs mb-1">Enhanced Query</div>
+          <button class="w-full text-left enhance-btn p-2 rounded border text-sm" 
                   data-enhanced-query="${this.escape(enhancement.enhanced_query)}">
             ${this.escape(enhancement.enhanced_query)}
           </button>
@@ -323,9 +323,9 @@ class AdvancedSearchInterface {
     if (enhancement.spelling_corrections && enhancement.spelling_corrections.length > 0) {
       content += `
         <div class="mb-3">
-          <div class="text-xs text-slate-400 mb-1">Did you mean?</div>
+          <div class="text-xs mb-1">Did you mean?</div>
           ${enhancement.spelling_corrections.map(correction => `
-            <button class="mr-2 mb-1 bg-amber-900 hover:bg-amber-800 px-2 py-1 rounded text-xs text-amber-100" 
+            <button class="mr-2 mb-1 correction-chip px-2 py-1 rounded text-xs border" 
                     data-correction="${this.escape(correction)}">
               ${this.escape(correction)}
             </button>
@@ -339,11 +339,11 @@ class AdvancedSearchInterface {
     // Alternative queries
     if (enhancement.alternative_queries && enhancement.alternative_queries.length > 0) {
       content += `
-        <div class="p-4 border-b border-slate-700">
-          <div class="text-xs text-slate-400 mb-2">Alternative Phrasings</div>
+        <div class="p-4 suggestion-divider">
+          <div class="text-xs mb-2">Alternative Phrasings</div>
           <div class="space-y-1">
             ${enhancement.alternative_queries.map(alt => `
-              <button class="w-full text-left bg-slate-700 hover:bg-slate-600 p-2 rounded text-sm text-slate-200" 
+              <button class="w-full text-left alt-btn p-2 rounded text-sm" 
                       data-alternative="${this.escape(alt)}">
                 ${this.escape(alt)}
               </button>
@@ -487,71 +487,63 @@ class AdvancedSearchInterface {
     // Hide empty state
     if (emptyContainer) emptyContainer.classList.add('hidden');
     
-    // Render results
+    // Render results as note-style cards (matches Notes page tone)
     const frag = document.createDocumentFragment();
     this.currentResults.forEach(r => {
       const div = document.createElement('div');
-      div.className = 'result-card';
+      div.className = 'note-card';
       div.onclick = () => {
         const id = r.note_id || r.id;
         if (id) window.location.href = `/detail/${id}`;
       };
-      
+
       const ts = r.timestamp ? new Date((r.timestamp + '').replace(' ', 'T')).toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
       }) : '';
-      
-      // Get note type indicator
+
       const typeInfo = this.getTypeInfo(r.type);
-      
+      const title = this.escape(r.title || '(untitled)');
+      const bodySrc = r.snippet || r.summary || (r.extracted_text || r.content || '');
+      const snippet = this.escape(String(bodySrc).slice(0, 200)) + (String(bodySrc).length > 200 ? '…' : '');
+
+      const tagsHtml = this.renderTags(r.tags || r.tag_list || '');
+      const scoresHtml = [
+        typeof r.combined_score === 'number' ? `<span class="score-badge">${(r.combined_score * 100).toFixed(0)}%</span>` : '',
+        typeof r.semantic_score === 'number' ? `<span class="score-badge">SEM ${(r.semantic_score * 100).toFixed(0)}%</span>` : '',
+        typeof r.fts_score === 'number' ? `<span class="score-badge">FTS ${(r.fts_score * 100).toFixed(0)}%</span>` : ''
+      ].filter(Boolean).join(' ');
+
       div.innerHTML = `
         <div class="flex items-start justify-between mb-2">
-          <h3 class="result-title flex-1">${this.escape(r.title || '(untitled)')}</h3>
-          <div class="flex items-center gap-2 text-xs text-slate-400">
-            <div class="flex items-center gap-1">
-              <span class="w-2 h-2 rounded-full ${typeInfo.color}"></span>
-              <span>${typeInfo.label}</span>
-            </div>
-            ${ts ? `<span class="font-mono">${ts}</span>` : ''}
+          <h4 class="note-title">${title}</h4>
+          <div class="note-meta">
+            <span class="type-dot ${typeInfo.color}"></span>
+            <span class="type-label">${typeInfo.label}</span>
+            ${ts ? `<span class="time">${ts}</span>` : ''}
           </div>
         </div>
-        
-        <div class="result-snippet mb-3">
-          ${this.escape((r.snippet || r.summary || (r.content || '')).slice(0, 200))}${(r.snippet || r.summary || (r.content || '')).length > 200 ? '...' : ''}
-        </div>
-        
+        <div class="note-snippet mb-2">${snippet}</div>
         <div class="flex items-center justify-between">
-          <div class="result-tags">
-            ${this.renderTags(r.tags || r.tag_list || '')}
-          </div>
-          <div class="flex items-center gap-2">
-            ${typeof r.fts_score === 'number' ? `<span class="score-badge">FTS ${(r.fts_score * 100).toFixed(0)}%</span>` : ''}
-            ${typeof r.semantic_score === 'number' ? `<span class="score-badge">SEM ${(r.semantic_score * 100).toFixed(0)}%</span>` : ''}
-            ${typeof r.combined_score === 'number' ? `<span class="score-badge">COMB ${(r.combined_score * 100).toFixed(0)}%</span>` : ''}
-          </div>
+          <div class="note-tags">${tagsHtml}</div>
+          <div class="note-scores">${scoresHtml}</div>
         </div>
       `;
-      // If image note, inject preview block before snippet
+
+      // Optional: image preview
       const isImage = !!(r && (r.type === 'image' || String(r.file_type||'').toLowerCase() === 'image' || String(r.file_mime_type||'').toLowerCase().startsWith('image/')));
       const safeUrl = r.file_url || (r.file_filename ? ('/files/' + r.file_filename) : '');
       if (isImage && safeUrl) {
-        const hdr = div.querySelector('.flex.items-start.justify-between');
-        const snippet = div.querySelector('.result-snippet');
         const block = document.createElement('div');
-        block.className = 'mt-2 rounded overflow-hidden border border-white/10 bg-black/20';
+        block.className = 'mt-2 rounded overflow-hidden note-image';
         const img = document.createElement('img');
         img.src = safeUrl;
         img.alt = 'Image preview';
         img.style.maxHeight = '160px';
         img.style.width = '100%';
-        img.style.objectFit = 'contain';
-        img.style.display = 'block';
+        img.style.objectFit = 'cover';
         block.appendChild(img);
-        if (snippet) {
-          snippet.parentNode.insertBefore(block, snippet);
-        } else {
-          div.appendChild(block);
-        }
+        const headingRow = div.querySelector('.flex.items-start.justify-between');
+        if (headingRow) headingRow.insertAdjacentElement('afterend', block);
       }
 
       frag.appendChild(div);
@@ -563,7 +555,7 @@ class AdvancedSearchInterface {
     const typeMap = {
       'audio': { label: 'Audio', color: 'bg-yellow-400' },
       'apple': { label: 'Shortcut', color: 'bg-green-400' },
-      'meeting': { label: 'Meeting', color: 'bg-purple-400' },
+      'meeting': { label: 'Meeting', color: 'bg-cyan-400' },
       'text': { label: 'Text', color: 'bg-blue-400' }
     };
     return typeMap[type] || { label: 'Note', color: 'bg-blue-400' };

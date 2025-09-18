@@ -456,7 +456,6 @@ async def capture_quick_note(request: Request) -> JSONResponse:
     Supports content sent as:
     - JSON body: {"content": "..."} or {"text": "..."}
     - Form-encoded body (application/x-www-form-urlencoded): content=...
-    - Query parameters: ?content=...
     """
     if not _service:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -484,11 +483,6 @@ async def capture_quick_note(request: Request) -> JSONResponse:
         except Exception:
             payload = {}
 
-        # Also merge in query params as fallback/defaults
-        query_params = dict(request.query_params)
-        for k, v in query_params.items():
-            payload.setdefault(k, v)
-
         # Validate into model (tolerant to extra keys)
         qn = QuickNoteRequest(**{k: v for k, v in payload.items() if k in {"content", "text", "source", "note_type"}})
 
@@ -512,7 +506,9 @@ async def capture_quick_note(request: Request) -> JSONResponse:
             extract_actions=True
         )
 
-        result = await _service.unified_capture(unified_request)
+        # Use default user_id=1 for quick notes when no authentication is provided
+        # This ensures quick notes appear in the main dashboard
+        result = await _service.unified_capture(unified_request, user_id="1")
 
         if result.success:
             return JSONResponse(content={

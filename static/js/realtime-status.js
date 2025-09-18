@@ -35,14 +35,8 @@ class RealtimeStatusManager {
             this.createProgressBar(noteId, progressContainer);
         }
 
-        // Build SSE URL with signed token if available to avoid header-based auth
-        const baseUrl = `/api/status/stream/${noteId}`;
-        const url = (window.SSE_TOKEN && typeof window.SSE_TOKEN === 'string')
-            ? `${baseUrl}?token=${encodeURIComponent(window.SSE_TOKEN)}`
-            : baseUrl;
-
-        // Start SSE stream (credentials used for same-origin cookies; token handles cross-origin)
-        const eventSource = new EventSource(url, {
+        // Start SSE stream relying on same-origin session cookies
+        const eventSource = new EventSource(`/api/status/stream/${noteId}`, {
             withCredentials: true
         });
         this.activeStreams.set(noteId, eventSource);
@@ -65,38 +59,27 @@ class RealtimeStatusManager {
             }
         };
 
-        eventSource.onerror = async (error) => {
+        eventSource.onerror = (error) => {
             console.error('SSE error for note', noteId, error);
-            
-            // Check if it's an authentication error (401)
-            if (eventSource.readyState === EventSource.CLOSED) {
-                const fails = (this.failCounts.get(noteId) || 0) + 1;
-                this.failCounts.set(noteId, fails);
-                console.log('SSE connection closed for note', noteId, `(fail #${fails})`);
-                // Try to refresh SSE token and reconnect once
-                try {
-                    const resp = await fetch('/api/sse-token', { credentials: 'same-origin' });
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        if (data && data.token) {
-                            window.SSE_TOKEN = data.token;
-                            console.log('Refreshed SSE token; reconnecting stream for note', noteId);
-                            // Stop if too many failures to avoid spam
-                            if (fails >= 5) {
-                                console.warn('Stopping SSE retries for note', noteId, 'after multiple failures');
-                                this.stopMonitoring(noteId);
-                                if (onError) onError(error);
-                                return;
-                            }
-                            // Reconnect
-                            setTimeout(() => this.monitorNote(noteId, options), 500);
-                            return;
-                        }
-                    }
-                } catch (e) { /* ignore */ }
-                this.stopMonitoring(noteId);
-                if (onError) onError(error);
+            try {
+                eventSource.close();
+            } catch (closeErr) {
+                console.debug('SSE close error', closeErr);
             }
+            this.activeStreams.delete(noteId);
+
+            const fails = (this.failCounts.get(noteId) || 0) + 1;
+            this.failCounts.set(noteId, fails);
+            console.log('SSE connection closed for note', noteId, `(fail #${fails})`);
+
+            const delay = fails === 1 ? 1000 : fails === 2 ? 2000 : fails === 3 ? 5000 : 10000;
+            if (fails >= 5) {
+                console.warn('Stopping SSE retries for note', noteId, 'after multiple failures');
+                if (onError) onError(error);
+                return;
+            }
+
+            setTimeout(() => this.monitorNote(noteId, options), delay);
         };
 
         return eventSource;
@@ -364,9 +347,8 @@ class RealtimeStatusManager {
                 // Prefer legacy cookie-based endpoint which returns 200 in more cases
                 let res = await fetch('/api/queue/status', { credentials: 'same-origin' });
                 if (res.status === 401) {
-                    // Fallback to token-based status endpoint
-                    const token = (window.SSE_TOKEN && typeof window.SSE_TOKEN === 'string') ? `?token=${encodeURIComponent(window.SSE_TOKEN)}` : '';
-                    res = await fetch(`/api/status/queue${token}`, { credentials: 'same-origin' });
+                    // Fallback to cookie-authenticated status endpoint
+                    res = await fetch('/api/status/queue', { credentials: 'same-origin' });
                 }
                 if (res.status === 401) {
                     console.warn('Queue polling unauthorized — stopping interval');

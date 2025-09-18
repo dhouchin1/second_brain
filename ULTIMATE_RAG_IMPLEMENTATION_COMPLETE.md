@@ -1,4 +1,4 @@
-# 🎉 Ultimate RAG Implementation - COMPLETE!
+# ⚠️ Ultimate RAG Implementation Status (2025-09)
 
 ## 🏆 Mission Accomplished
 
@@ -6,7 +6,9 @@
 
 ---
 
-## ✅ Implementation Status: 100% COMPLETE
+> Retrieval orchestration still relies on SQLite FTS + embeddings without the planned reranker fallback. GPU deployment scripts are pending. The checklist below documents goals rather than finished work.
+
+## 🚧 Implementation Status: In Progress
 
 ### Priority 1: Cross-Encoder Re-ranking ✅ COMPLETED
 - **Status**: Production ready with cached models

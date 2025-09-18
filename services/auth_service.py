@@ -13,12 +13,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Request, Header, HTTPException, status, Form, Query, Depends, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, OAuth2PasswordRequestForm
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from config import settings
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 
 # --- Models ---
@@ -51,6 +53,9 @@ SECRET_KEY = settings.secret_key
 WEBHOOK_TOKEN = settings.webhook_token
 ALGORITHM = settings.algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
 
 
 class AuthService:
@@ -394,7 +399,8 @@ def init_auth_router(get_conn_func, render_page_func, set_flash_func, auth_servi
 # --- Authentication Endpoints ---
 
 @router.post("/register", response_model=User)
-def register(username: str = Form(...), password: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+@limiter.limit(f"{settings.auth_rate_limit_per_minute}/minute")
+def register(request: Request, username: str = Form(...), password: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """Register a new user."""
     conn = get_conn()
     c = conn.cursor()
@@ -419,7 +425,8 @@ def register(username: str = Form(...), password: str = Form(...), background_ta
 
 
 @router.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit(f"{settings.auth_rate_limit_per_minute}/minute")
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """OAuth2 token endpoint for programmatic access."""
     user = auth_service.authenticate_user(form_data.username, form_data.password)
     if not user:
@@ -437,6 +444,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 # --- Magic Link Authentication Endpoints ---
 
 @router.post("/api/auth/magic-link")
+@limiter.limit(f"{settings.auth_rate_limit_per_minute}/minute")
 async def request_magic_link(request: Request, email: str = Form(...), csrf_token: str = Form(...)):
     """Request a magic link to be sent to the provided email"""
     # Validate CSRF token
@@ -500,8 +508,8 @@ async def verify_magic_link(request: Request, token: str = Query(...)):
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=True,  # Use in production with HTTPS
-        samesite="lax",
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
     )
     return response
@@ -551,6 +559,7 @@ def login_page(request: Request):
 
 
 @router.post("/login")
+@limiter.limit(f"{settings.auth_rate_limit_per_minute}/minute")
 def login_submit(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...)):
     """Handle login form submission."""
     if not auth_service.validate_csrf(request, csrf_token):
@@ -562,7 +571,14 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
         return resp
     token = auth_service.create_access_token({"sub": user.username}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     resp = RedirectResponse(url="/", status_code=302)
-    resp.set_cookie("access_token", token, httponly=True, max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60)
+    resp.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60
+    )
     set_flash(resp, "Welcome back!", "success")
     return resp
 
@@ -587,6 +603,7 @@ def signup_page(request: Request):
 
 
 @router.post("/signup")
+@limiter.limit(f"{settings.auth_rate_limit_per_minute}/minute")
 def signup_submit(request: Request, username: str = Form(...), password: str = Form(...), csrf_token: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """Handle signup form submission."""
     if not auth_service.validate_csrf(request, csrf_token):
@@ -615,7 +632,14 @@ def signup_submit(request: Request, username: str = Form(...), password: str = F
     
     token = auth_service.create_access_token({"sub": username}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     resp = RedirectResponse(url="/", status_code=302)
-    resp.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60)
+    resp.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES*60
+    )
     set_flash(resp, "Account created!", "success")
     return resp
 
@@ -646,8 +670,9 @@ async def extend_session_for_recording(request: Request, duration_minutes: int =
             key="access_token",
             value=new_token,
             httponly=True,
-            max_age=duration_minutes * 60,  # Convert to seconds
-            samesite="lax"
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+            max_age=duration_minutes * 60  # Convert to seconds
         )
         
         return response
@@ -684,14 +709,37 @@ async def start_recording_session(request: Request):
             key="access_token",
             value=extended_token,
             httponly=True,
-            max_age=75 * 60,  # 75 minutes in seconds
-            samesite="lax"
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+            max_age=75 * 60  # 75 minutes in seconds
         )
         
         return response
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start recording session: {str(e)}")
+
+
+@router.get("/api/auth/token")
+async def get_auth_token(request: Request):
+    """Get current access token for authenticated media requests"""
+    current_user = auth_service.get_current_user_silent(request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        # Get current token from cookies
+        token = request.cookies.get("access_token")
+        if not token:
+            raise HTTPException(status_code=401, detail="No session token found")
+
+        return JSONResponse({
+            "access_token": token,
+            "user": current_user.username
+        })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to get token")
 
 
 # --- Auto-seeding Helper Functions ---

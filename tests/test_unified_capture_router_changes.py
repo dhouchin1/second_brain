@@ -5,7 +5,7 @@
 Test suite for recent unified capture router changes.
 
 Tests the enhanced quick-note endpoint with flexible request handling
-for JSON, form-encoded, and query parameter submissions.
+for JSON and form-encoded submissions.
 """
 
 import pytest
@@ -179,18 +179,18 @@ class TestQuickNoteEndpoint:
         assert call_args.primary_content == "Form encoded content"
     
     @pytest.mark.asyncio
-    async def test_query_parameters(self, mock_service, mock_request_query):
-        """Test request with query parameters."""
+    async def test_query_parameters_rejected(self, mock_service, mock_request_query):
+        """Ensure queries with only URL parameters are rejected."""
         mock_request_query.json = AsyncMock(side_effect=Exception("No JSON"))
         mock_request_query.form = AsyncMock(side_effect=Exception("No form"))
-        
+
         from services.unified_capture_router import capture_quick_note
-        
+
         response = await capture_quick_note(mock_request_query)
-        
-        mock_service.unified_capture.assert_called_once()
-        call_args = mock_service.unified_capture.call_args[0][0]
-        assert call_args.primary_content == "Query parameter content"
+
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 422
+        mock_service.unified_capture.assert_not_called()
     
     @pytest.mark.asyncio
     async def test_empty_content_validation(self, mock_service, mock_request_json):

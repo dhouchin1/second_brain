@@ -1,6 +1,10 @@
+from __future__ import annotations
+
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, AliasChoices
+from pydantic import Field, AliasChoices, model_validator
+from typing import Any, Optional
 
 
 
@@ -15,6 +19,9 @@ class Settings(BaseSettings):
     vault_path: Path = BASE_DIR
     audio_dir: Path = BASE_DIR / "audio"
     uploads_dir: Path = BASE_DIR / "uploads"
+    media_dir: Path = BASE_DIR / "media"
+    snapshots_dir: Path = BASE_DIR / "snapshots"
+    videos_dir: Path = BASE_DIR / "videos"
     # Maximum size (in bytes) for any uploaded file (audio/images/pdfs)
     # Can be overridden via env var MAX_FILE_SIZE
     max_file_size: int = 200 * 1024 * 1024  # 200MB default
@@ -23,15 +30,15 @@ class Settings(BaseSettings):
     # Transcription backend: 'whisper' (whisper.cpp) or 'vosk' (lightweight, CPU-only)
     transcriber: str = "whisper"
     # Path to Vosk ASR model directory when using transcriber='vosk'
-    vosk_model_path: Path | None = None
+    vosk_model_path: Optional[Path] = None
     ollama_api_url: str = "http://localhost:11434/api/generate"
     ollama_model: str = "llama3.2"
     # Optional Ollama performance/resource knobs
-    ollama_num_ctx: int | None = None
-    ollama_num_predict: int | None = None
-    ollama_temperature: float | None = None
-    ollama_top_p: float | None = None
-    ollama_num_gpu: int | None = None
+    ollama_num_ctx: Optional[int] = None
+    ollama_num_predict: Optional[int] = None
+    ollama_temperature: Optional[float] = None
+    ollama_top_p: Optional[float] = None
+    ollama_num_gpu: Optional[int] = None
     # AI processing controls (to reduce local CPU/RAM usage)
     ai_processing_enabled: bool = True
     ai_chunk_size_chars: int = 1500
@@ -51,25 +58,118 @@ class Settings(BaseSettings):
     # Max seconds to process a single note before marking failed:timeout
     # Increase this if you plan to upload longer audio recordings
     processing_timeout_seconds: int = 1800  # 30 minutes
+
+    # Web ingestion defaults and quotas
+    web_capture_screenshot_default: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('web_capture_screenshot_default', 'WEB_CAPTURE_SCREENSHOT_DEFAULT')
+    )
+    web_capture_pdf_default: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('web_capture_pdf_default', 'WEB_CAPTURE_PDF_DEFAULT')
+    )
+    web_capture_html_default: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('web_capture_html_default', 'WEB_CAPTURE_HTML_DEFAULT')
+    )
+    web_download_original_default: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('web_download_original_default', 'WEB_DOWNLOAD_ORIGINAL_DEFAULT')
+    )
+    web_download_media_default: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('web_download_media_default', 'WEB_DOWNLOAD_MEDIA_DEFAULT')
+    )
+    web_fetch_captions_default: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('web_fetch_captions_default', 'WEB_FETCH_CAPTIONS_DEFAULT')
+    )
+    web_extract_images_default: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('web_extract_images_default', 'WEB_EXTRACT_IMAGES_DEFAULT')
+    )
+    web_timeout_default: int = Field(
+        default=30,
+        validation_alias=AliasChoices('web_timeout_default', 'WEB_TIMEOUT_DEFAULT')
+    )
+    web_storage_limit_mb: int = Field(
+        default=4096,
+        validation_alias=AliasChoices('web_storage_limit_mb', 'WEB_STORAGE_LIMIT_MB')
+    )
+    web_async_ingestion_default: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('web_async_ingestion_default', 'WEB_ASYNC_INGESTION_DEFAULT')
+    )
+
+    redis_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices('redis_url', 'REDIS_URL')
+    )
     
     # Security settings
     secret_key: str = Field(
-        default="your-super-secret-key-change-this-in-production",
+        default="generate-secure-key-in-production",
         validation_alias=AliasChoices('secret_key', 'SECRET_KEY')
     )
     webhook_token: str = Field(
-        default="your-webhook-token-change-this",
+        default="generate-secure-webhook-token-in-production",
         validation_alias=AliasChoices('webhook_token', 'WEBHOOK_TOKEN')
     )
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    
+    # Production security settings
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices('environment', 'ENVIRONMENT', 'ENV')
+    )
+    
+    # CORS configuration
+    cors_origins: str = Field(
+        default="http://localhost:8082,http://127.0.0.1:8082",
+        validation_alias=AliasChoices('cors_origins', 'CORS_ORIGINS')
+    )
+    cors_credentials: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('cors_credentials', 'CORS_CREDENTIALS')
+    )
+    
+    # Rate limiting
+    rate_limit_per_minute: int = Field(
+        default=100,
+        validation_alias=AliasChoices('rate_limit_per_minute', 'RATE_LIMIT_PER_MINUTE')
+    )
+    auth_rate_limit_per_minute: int = Field(
+        default=5,
+        validation_alias=AliasChoices('auth_rate_limit_per_minute', 'AUTH_RATE_LIMIT_PER_MINUTE')
+    )
+    
+    # Cookie security
+    cookie_secure: bool = Field(
+        default_factory=lambda: os.environ.get('ENVIRONMENT', 'development') == 'production',
+        validation_alias=AliasChoices('cookie_secure', 'COOKIE_SECURE')
+    )
+    cookie_samesite: str = Field(
+        default="strict",
+        validation_alias=AliasChoices('cookie_samesite', 'COOKIE_SAMESITE')
+    )
+    
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production environment."""
+        return self.environment.lower() in ('production', 'prod')
+    
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Get CORS origins as list."""
+        return [origin.strip() for origin in self.cors_origins.split(',') if origin.strip()]
 
  # NEW: Obsidian + Raindrop
-    obsidian_vault_path: str | None = Field(
+    obsidian_vault_path: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('obsidian_vault_path','OBSIDIAN_VAULT_PATH')
     )
-    obsidian_projects_root: str | None = Field(
+    obsidian_projects_root: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('obsidian_projects_root','OBSIDIAN_PROJECTS_ROOT')
     )
@@ -77,7 +177,7 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices('obsidian_per_project','OBSIDIAN_PER_PROJECT')
     )
-    raindrop_token: str | None = Field(
+    raindrop_token: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('raindrop_token','RAINDROP_TOKEN')
     )
@@ -117,7 +217,7 @@ class Settings(BaseSettings):
         default="resend",  # resend, sendgrid, mailgun, smtp
         validation_alias=AliasChoices('email_service', 'EMAIL_SERVICE')
     )
-    email_api_key: str | None = Field(
+    email_api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('email_api_key', 'EMAIL_API_KEY', 'RESEND_API_KEY')
     )
@@ -130,7 +230,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices('email_from_name', 'EMAIL_FROM_NAME')
     )
     # SMTP Configuration (if using email_service=smtp)
-    smtp_host: str | None = Field(
+    smtp_host: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('smtp_host', 'SMTP_HOST')
     )
@@ -138,11 +238,11 @@ class Settings(BaseSettings):
         default=587,
         validation_alias=AliasChoices('smtp_port', 'SMTP_PORT')
     )
-    smtp_username: str | None = Field(
+    smtp_username: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('smtp_username', 'SMTP_USERNAME')
     )
-    smtp_password: str | None = Field(
+    smtp_password: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('smtp_password', 'SMTP_PASSWORD')
     )
@@ -188,46 +288,15 @@ class Settings(BaseSettings):
         return [p.strip() for p in self.ai_llm_provider_priority.split(',') if p.strip()]
     
     # External AI API keys (only used when ai_allow_external=True)
-    openai_api_key: str | None = Field(
+    openai_api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('openai_api_key', 'OPENAI_API_KEY')
     )
-    anthropic_api_key: str | None = Field(
+    anthropic_api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices('anthropic_api_key', 'ANTHROPIC_API_KEY')
     )
 
-    # Auto-seeding Configuration
-    auto_seeding_enabled: bool = Field(
-        default=True,
-        validation_alias=AliasChoices('auto_seeding_enabled', 'AUTO_SEEDING_ENABLED')
-    )
-    auto_seeding_namespace: str = Field(
-        default=".starter_content",
-        validation_alias=AliasChoices('auto_seeding_namespace', 'AUTO_SEEDING_NAMESPACE')
-    )
-    auto_seeding_embeddings: bool = Field(
-        default=True,
-        validation_alias=AliasChoices('auto_seeding_embeddings', 'AUTO_SEEDING_EMBEDDINGS')
-    )
-    auto_seeding_embed_model: str = Field(
-        default="all-MiniLM-L6-v2",  # Updated to use local sentence-transformers
-        validation_alias=AliasChoices('auto_seeding_embed_model', 'AUTO_SEEDING_EMBED_MODEL')
-    )
-    auto_seeding_skip_if_content: bool = Field(
-        default=True,
-        validation_alias=AliasChoices('auto_seeding_skip_if_content', 'AUTO_SEEDING_SKIP_IF_CONTENT')
-    )
-    auto_seeding_min_notes: int = Field(
-        default=5,
-        validation_alias=AliasChoices('auto_seeding_min_notes', 'AUTO_SEEDING_MIN_NOTES')
-    )
-
-    # Auto-seeding: refresh FTS index after seeding (best-effort)
-    auto_seeding_refresh_indices: bool = Field(
-        default=True,
-        validation_alias=AliasChoices('auto_seeding_refresh_indices', 'AUTO_SEEDING_REFRESH_INDICES')
-    )
 
     # Capture deduplication (prevent duplicate notes based on content hash)
     capture_dedup_enabled: bool = Field(
@@ -245,5 +314,18 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"   # prevents crashes if other stray keys exist
     )
+    
+    @model_validator(mode='after')
+    def generate_secure_keys(self) -> 'Settings':
+        """Generate secure keys if defaults are still being used."""
+        if self.secret_key == "generate-secure-key-in-production":
+            self.secret_key = os.urandom(32).hex()
+            print("⚠️  Generated random SECRET_KEY. Set SECRET_KEY env var for production!")
+        
+        if self.webhook_token == "generate-secure-webhook-token-in-production":
+            self.webhook_token = os.urandom(32).hex()
+            print("⚠️  Generated random WEBHOOK_TOKEN. Set WEBHOOK_TOKEN env var for production!")
+        
+        return self
 
 settings = Settings()

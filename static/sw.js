@@ -1,7 +1,9 @@
-// Second Brain Service Worker
-// Provides offline functionality and caching for PWA
+// Second Brain Service Worker - Enhanced PWA capabilities
+// Provides advanced offline functionality, background sync, and mobile optimizations
 
-const CACHE_NAME = 'second-brain-v1';
+const CACHE_NAME = 'second-brain-v1.0.1';
+const STATIC_CACHE = 'second-brain-static-v1';
+const DYNAMIC_CACHE = 'second-brain-dynamic-v1';
 const OFFLINE_URL = '/offline';
 
 // Core files to cache for offline functionality

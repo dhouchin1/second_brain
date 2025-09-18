@@ -1,0 +1,83 @@
+# Second Brain - Background Worker Service
+# Systemd service definition for Celery background workers
+
+[Unit]
+Description=Second Brain - Background Worker
+Documentation=https://github.com/dhouchin/second_brain
+After=network.target network-online.target redis.service secondbrain.service
+Wants=network-online.target
+Requires=redis.service
+PartOf=secondbrain.service
+
+[Service]
+Type=exec
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/secondbrain
+Environment=PATH=/var/www/secondbrain/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/var/www/secondbrain
+Environment=ENVIRONMENT=production
+Environment=LOG_LEVEL=INFO
+Environment=CELERY_BROKER_URL=redis://localhost:6379/0
+Environment=CELERY_RESULT_BACKEND=redis://localhost:6379/0
+EnvironmentFile=-/etc/secondbrain/production.env
+
+# Celery worker command
+ExecStart=/var/www/secondbrain/.venv/bin/celery \
+    --app=tasks.celery \
+    worker \
+    --loglevel=info \
+    --concurrency=4 \
+    --max-tasks-per-child=1000 \
+    --time-limit=300 \
+    --soft-time-limit=240
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=5
+
+# Security settings (same as main service)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/secondbrain /var/log/secondbrain /var/run/secondbrain /tmp
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+PrivateDevices=true
+
+# Resource limits (more generous for background processing)
+MemoryMax=4G
+CPUQuota=400%
+TasksMax=8192
+LimitNOFILE=65536
+
+# Process management
+RuntimeDirectory=secondbrain-worker
+RuntimeDirectoryMode=0755
+LogsDirectory=secondbrain-worker
+LogsDirectoryMode=0755
+StateDirectory=secondbrain-worker
+StateDirectoryMode=0755
+
+# Standard I/O
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=secondbrain-worker
+
+[Install]
+WantedBy=multi-user.target
+Also=secondbrain.service

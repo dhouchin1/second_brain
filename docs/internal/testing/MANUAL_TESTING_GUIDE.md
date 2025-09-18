@@ -65,8 +65,8 @@
 2. **Quick Note Endpoint** ✅ **Recently Enhanced**
    - [ ] POST to `/api/unified-capture/quick-note` with JSON: `{"content": "test note"}`
    - [ ] POST with form data: `content=test+note`
-   - [ ] GET with query: `/api/unified-capture/quick-note?content=test+note`
-   - [ ] All formats should create notes successfully
+   - [ ] Confirm GET requests with query parameters alone return a validation error
+   - [ ] Both supported formats should create notes successfully
 
 ### 🖼️ Advanced Capture Features
 ⚠️ **Status: Several tests failing but core functionality present**

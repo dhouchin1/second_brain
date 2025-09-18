@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-6 py-10 space-y-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-3xl font-semibold text-slate-100">Web Ingestion Jobs</h1>
+      <p class="text-slate-400 text-sm">Most recent {{ jobs|length }} job(s)</p>
+    </div>
+    <a href="/" class="text-sm text-indigo-300 hover:text-indigo-100">← Back to dashboard</a>
+  </div>
+
+  {% if jobs %}
+  <div class="overflow-x-auto bg-slate-900/70 border border-slate-700 rounded-xl">
+    <table class="min-w-full text-sm text-left text-slate-300">
+      <thead class="bg-slate-800/80 text-slate-200 uppercase text-xs tracking-wide">
+        <tr>
+          <th class="px-4 py-3">Status</th>
+          <th class="px-4 py-3">URL</th>
+          <th class="px-4 py-3">Note</th>
+          <th class="px-4 py-3">Created</th>
+          <th class="px-4 py-3">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr class="border-t border-slate-800/70 hover:bg-slate-800/40">
+          <td class="px-4 py-3">
+            {% if job.status == 'completed' %}
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">
+                <i data-lucide="check"></i> Completed
+              </span>
+            {% elif job.status == 'failed' %}
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">
+                <i data-lucide="x"></i> Failed
+              </span>
+            {% elif job.status == 'processing' %}
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">
+                <i data-lucide="loader"></i> Processing
+              </span>
+            {% else %}
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-600/20 text-slate-300">
+                <i data-lucide="clock"></i> {{ job.status|capitalize }}
+              </span>
+            {% endif %}
+            {% if job.error %}
+              <p class="text-xs text-red-300 mt-1">{{ job.error }}</p>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 max-w-md">
+            <div class="truncate text-slate-200" title="{{ job.url }}">{{ job.url }}</div>
+            <div class="text-xs text-slate-400">Job ID: {{ job.job_id }}</div>
+          </td>
+          <td class="px-4 py-3">
+            {% if job.note_id %}
+              <a href="/detail/{{ job.note_id }}" class="text-indigo-300 hover:text-indigo-200">
+                View Note
+              </a>
+              {% if job.title %}
+              <div class="text-xs text-slate-400 mt-1">{{ job.title }}</div>
+              {% endif %}
+            {% else %}
+              <span class="text-xs text-slate-500">Pending</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs text-slate-400">{{ job.created_at or '—' }}</td>
+          <td class="px-4 py-3 text-xs text-slate-400">{{ job.completed_at or job.started_at or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="bg-slate-900/70 border border-slate-700 rounded-xl p-6 text-slate-300">
+    <p>No ingestion jobs recorded yet.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from config import settings
 from file_processor import FileProcessor
 from llm_utils import ollama_summarize
+from services.realtime_events import notify_note_update, schedule_note_update
 
 
 # --- Data Models ---
@@ -70,6 +71,7 @@ class WebhookService:
         if not file.content_type or not file.content_type.startswith('audio/'):
             raise HTTPException(status_code=400, detail="File must be audio")
         
+        conn = None
         try:
             # Process the file with existing processor
             processor = FileProcessor()
@@ -122,24 +124,30 @@ class WebhookService:
             )
             
             note_id = c.lastrowid
-            
+
+            note_payload = {
+                "id": note_id,
+                "title": "Incoming Audio",
+                "status": "queued",
+                "created_at": now,
+                "tags": tags,
+                "audio_filename": stored_filename,
+            }
+
             # FTS triggers handle indexing; no manual insert
-            
             conn.commit()
-            conn.close()
-            
+
             # Add to FIFO processing queue
             from services.audio_queue import audio_queue
             audio_queue.add_to_queue(note_id, user_id)
-            
+
             # Start batch timer if batch mode is enabled
             if settings.batch_mode_enabled:
                 audio_queue.start_batch_timer()
-            
-            # Start background processing 
-            from tasks import process_audio_queue
-            background_tasks.add_task(process_audio_queue)
-            
+
+            # Broadcast realtime update
+            await notify_note_update(user_id, "created", note_payload)
+
             return {
                 "success": True,
                 "id": note_id,
@@ -151,6 +159,12 @@ class WebhookService:
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
     
     # --- Discord Webhooks ---
     
@@ -162,54 +176,64 @@ class WebhookService:
         """Enhanced Discord webhook with user mapping."""
         # Map Discord user to Second Brain user
         conn = self.get_conn()
-        c = conn.cursor()
-        
-        # Check if Discord user is linked
-        discord_link = c.execute(
-            "SELECT user_id FROM discord_users WHERE discord_id = ?",
-            (data.discord_user_id,)
-        ).fetchone()
-        
-        if not discord_link:
-            # Auto-register or return error
-            raise HTTPException(
-                status_code=401, 
-                detail="Discord user not linked. Use !link command first."
+        try:
+            c = conn.cursor()
+            
+            # Check if Discord user is linked
+            discord_link = c.execute(
+                "SELECT user_id FROM discord_users WHERE discord_id = ?",
+                (data.discord_user_id,)
+            ).fetchone()
+            
+            if not discord_link:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Discord user not linked. Use !link command first."
+                )
+            
+            user_id = discord_link[0]
+            
+            # Process note with AI
+            result = ollama_summarize(data.note)
+            summary = result.get("summary", "")
+            ai_tags = result.get("tags", [])
+            ai_actions = result.get("actions", [])
+            
+            tag_list = [t.strip() for t in data.tags.split(",") if t.strip()]
+            tag_list.extend([t for t in ai_tags if t and t not in tag_list])
+            tags = ",".join(tag_list)
+            
+            c.execute(
+                "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    data.note[:60] + "..." if len(data.note) > 60 else data.note,
+                    data.note,
+                    data.note,
+                    summary,
+                    tags,
+                    "\n".join(ai_actions),
+                    data.type,
+                    data.timestamp,
+                    user_id
+                ),
             )
-        
-        user_id = discord_link[0]
-        
-        # Process note with AI
-        result = ollama_summarize(data.note)
-        summary = result.get("summary", "")
-        ai_tags = result.get("tags", [])
-        ai_actions = result.get("actions", [])
-        
-        # Combine tags
-        tag_list = [t.strip() for t in data.tags.split(",") if t.strip()]
-        tag_list.extend([t for t in ai_tags if t and t not in tag_list])
-        tags = ",".join(tag_list)
-        
-        # Save note
-        c.execute(
-            "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                data.note[:60] + "..." if len(data.note) > 60 else data.note,
-                data.note,
-                data.note,
-                summary,
-                tags,
-                "\n".join(ai_actions),
-                data.type,
-                data.timestamp,
-                user_id
-            ),
-        )
-        conn.commit()
-        note_id = c.lastrowid
-        conn.close()
-        
-        return {"status": "ok", "note_id": note_id}
+            conn.commit()
+            note_id = c.lastrowid
+            note_payload = {
+                "id": note_id,
+                "title": data.note[:60] + "..." if len(data.note) > 60 else data.note,
+                "content": data.note,
+                "summary": summary,
+                "tags": tags,
+                "type": data.type,
+                "created_at": data.timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "created",
+            }
+
+            schedule_note_update(user_id, "created", note_payload)
+            return {"status": "ok", "note_id": note_id}
+        finally:
+            conn.close()
     
     def process_discord_webhook(self, data: dict, user_id: int) -> dict:
         """Process Discord webhook with AI summarization."""
@@ -231,27 +255,40 @@ class WebhookService:
         
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = self.get_conn()
-        c = conn.cursor()
-        
-        c.execute(
-            "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                note[:60] + "..." if len(note) > 60 else note,
-                note,
-                note,
-                summary,
-                final_tags,
-                actions,
-                note_type,
-                now,
-                user_id,
-            ),
-        )
-        conn.commit()
-        note_id = c.lastrowid
-        conn.close()
-        
-        return {"status": "ok", "note_id": note_id}
+        try:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    note[:60] + "..." if len(note) > 60 else note,
+                    note,
+                    note,
+                    summary,
+                    final_tags,
+                    actions,
+                    note_type,
+                    now,
+                    user_id,
+                ),
+            )
+            conn.commit()
+            note_id = c.lastrowid
+            note_payload = {
+                "id": note_id,
+                "title": note[:60] + "..." if len(note) > 60 else note,
+                "content": note,
+                "summary": summary,
+                "tags": final_tags,
+                "actions": actions,
+                "type": note_type,
+                "created_at": now,
+                "status": "created",
+            }
+
+            schedule_note_update(user_id, "created", note_payload)
+            return {"status": "ok", "note_id": note_id}
+        finally:
+            conn.close()
     
     async def process_discord_upload_webhook(
         self,
@@ -494,25 +531,39 @@ Attendees: {', '.join(data.attendees)}
         
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = self.get_conn()
-        c = conn.cursor()
-        
-        c.execute(
-            "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                note[:60] + "..." if len(note) > 60 else note,
-                note,
-                summary,
-                final_tags,
-                actions,
-                note_type,
-                now,
-                user_id,
-            ),
-        )
-        conn.commit()
-        conn.close()
-        
-        return {"status": "ok", "note_id": note_id}
+        try:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO notes (title, body, content, summary, tags, actions, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    note[:60] + "..." if len(note) > 60 else note,
+                    note,
+                    note,
+                    summary,
+                    final_tags,
+                    actions,
+                    note_type,
+                    now,
+                    user_id,
+                ),
+            )
+            conn.commit()
+            note_id = c.lastrowid
+            note_payload = {
+                "id": note_id,
+                "title": note[:60] + "..." if len(note) > 60 else note,
+                "content": note,
+                "summary": summary,
+                "tags": final_tags,
+                "actions": actions,
+                "type": note_type,
+                "created_at": now,
+                "status": "created",
+            }
+            schedule_note_update(user_id, "created", note_payload)
+            return {"status": "ok", "note_id": note_id}
+        finally:
+            conn.close()
     
     # --- Browser Webhook ---
     
@@ -543,22 +594,34 @@ Attendees: {', '.join(data.attendees)}
         
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn = self.get_conn()
-        c = conn.cursor()
-        
-        c.execute(
-            "INSERT INTO notes (title, body, content, summary, tags, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                title or (formatted_content[:60] + "..." if len(formatted_content) > 60 else formatted_content),
-                formatted_content,
-                formatted_content,
-                summary,
-                final_tags,
-                "browser",
-                now,
-                user_id,
-            ),
-        )
-        conn.commit()
-        conn.close()
-        
-        return {"status": "ok", "note_id": note_id}
+        try:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO notes (title, body, content, summary, tags, type, timestamp, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    title or (formatted_content[:60] + "..." if len(formatted_content) > 60 else formatted_content),
+                    formatted_content,
+                    formatted_content,
+                    summary,
+                    final_tags,
+                    "browser",
+                    now,
+                    user_id,
+                ),
+            )
+            conn.commit()
+            note_id = c.lastrowid
+            note_payload = {
+                "id": note_id,
+                "title": title or formatted_content[:60] + ("..." if len(formatted_content) > 60 else ""),
+                "content": formatted_content,
+                "summary": summary,
+                "tags": final_tags,
+                "type": "browser",
+                "created_at": now,
+                "status": "created",
+            }
+            schedule_note_update(user_id, "created", note_payload)
+            return {"status": "ok", "note_id": note_id}
+        finally:
+            conn.close()

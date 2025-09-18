@@ -1,0 +1,102 @@
+# Second Brain - Docker Build Context Optimization
+# Exclude unnecessary files from Docker build context
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Development
+.pytest_cache
+.coverage
+htmlcov/
+.tox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Application specific
+notes.db
+notes.db-*
+brain.db
+brain.db-*
+*.log
+logs/
+audio/
+uploads/
+vault/
+models/
+build/
+dist/
+*.egg-info/
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Testing
+tests/
+test_*
+*_test.py
+
+# Deployment (exclude from build, will be copied separately)
+deploy/
+docker-compose*.yml
+Dockerfile*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Large files that shouldn't be in container
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.pdf
+*.zip
+*.tar.gz
+
+# Configuration files (will be mounted)
+config.ini
+*.env
+.env.*
+
+# Backup files
+*.backup
+*.bak
+backup/

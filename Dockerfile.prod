@@ -1,0 +1,150 @@
+# Second Brain - Production Dockerfile
+# Multi-stage build optimized for production deployment
+
+# Build stage - Python dependencies and compilation
+FROM python:3.11-slim as builder
+
+# Install system dependencies for building
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    pkg-config \
+    libssl-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Install production-specific packages
+RUN pip install --no-cache-dir gunicorn uvicorn[standard] supervisor
+
+# Whisper.cpp build stage
+FROM builder as whisper-builder
+
+RUN apt-get update && apt-get install -y \
+    cmake \
+    make \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build whisper.cpp
+WORKDIR /tmp
+RUN git clone https://github.com/ggerganov/whisper.cpp.git && \
+    cd whisper.cpp && \
+    mkdir build && cd build && \
+    cmake .. && \
+    make -j4
+
+# Download whisper model
+RUN cd whisper.cpp && \
+    bash ./models/download-ggml-model.sh base.en
+
+# Production stage - Minimal runtime image
+FROM python:3.11-slim as production
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    nginx \
+    supervisor \
+    sqlite3 \
+    ffmpeg \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create application user and directories
+RUN groupadd -r secondbrain && useradd -r -g secondbrain -s /bin/bash secondbrain
+RUN mkdir -p /var/www/secondbrain \
+    /var/log/secondbrain \
+    /var/run/secondbrain \
+    /var/cache/secondbrain \
+    /etc/secondbrain \
+    && chown -R secondbrain:secondbrain /var/www/secondbrain \
+    && chown -R secondbrain:secondbrain /var/log/secondbrain \
+    && chown -R secondbrain:secondbrain /var/run/secondbrain \
+    && chown -R secondbrain:secondbrain /var/cache/secondbrain
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy whisper.cpp binaries and models
+COPY --from=whisper-builder /tmp/whisper.cpp/build/bin/whisper /usr/local/bin/
+COPY --from=whisper-builder /tmp/whisper.cpp/models/ggml-base.en.bin /opt/models/
+
+# Copy application code
+WORKDIR /var/www/secondbrain
+COPY --chown=secondbrain:secondbrain . .
+
+# Copy configuration files
+COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY deploy/nginx/secondbrain.conf /etc/nginx/sites-available/secondbrain.conf
+COPY deploy/nginx/ssl.conf /etc/nginx/conf.d/ssl.conf
+COPY deploy/nginx/security-headers.conf /etc/nginx/conf.d/security-headers.conf
+COPY deploy/nginx/rate-limiting.conf /etc/nginx/conf.d/rate-limiting.conf
+COPY deploy/systemd/secondbrain.service /etc/systemd/system/
+COPY deploy/systemd/secondbrain-worker.service /etc/systemd/system/
+COPY deploy/gunicorn/supervisord.conf /etc/supervisor/conf.d/secondbrain.conf
+
+# Enable nginx site
+RUN ln -sf /etc/nginx/sites-available/secondbrain.conf /etc/nginx/sites-enabled/ && \
+    rm -f /etc/nginx/sites-enabled/default
+
+# Create required directories and set permissions
+RUN mkdir -p /var/www/secondbrain/static \
+    /var/www/secondbrain/vault \
+    /var/www/secondbrain/audio \
+    /var/www/letsencrypt \
+    /var/www/secondbrain/error_pages \
+    && chown -R secondbrain:secondbrain /var/www/secondbrain
+
+# Set up environment variables
+ENV PYTHONPATH=/var/www/secondbrain
+ENV ENVIRONMENT=production
+ENV LOG_LEVEL=INFO
+ENV WHISPER_CPP_PATH=/usr/local/bin/whisper
+ENV WHISPER_MODEL_PATH=/opt/models/ggml-base.en.bin
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8082/health || exit 1
+
+# Expose ports
+EXPOSE 80 443 8082
+
+# Create startup script
+RUN cat > /usr/local/bin/docker-entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Initialize database if needed
+if [ ! -f "/var/www/secondbrain/notes.db" ]; then
+    echo "Initializing database..."
+    cd /var/www/secondbrain
+    python migrate_db.py
+fi
+
+# Start supervisor (manages gunicorn and celery)
+echo "Starting supervisor..."
+exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/secondbrain.conf
+EOF
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Switch to application user
+USER secondbrain
+
+# Start the application
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

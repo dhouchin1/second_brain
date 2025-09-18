@@ -62,24 +62,46 @@ def ollama_summarize(text, prompt=None):
             "Respond in JSON with keys 'summary', 'tags', and 'actions'."
         ),
         "options": _ollama_options_dict() or None,
+        "format": "json",
     }
     try:
         resp = requests.post(settings.ollama_api_url, json=data, stream=True, timeout=60)
-        output = ""
-        for line in resp.iter_lines():
-            if line:
-                try:
-                    obj = json.loads(line.decode("utf-8"))
-                    if "response" in obj:
-                        output += obj["response"]
-                except Exception as e:
-                    print("Ollama stream parse error:", e, line)
-        output = output.strip()
+        resp.raise_for_status()
+        output_chunks: list[str] = []
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("Ollama stream parse error: %s", line)
+                continue
+            if obj.get("error"):
+                raise RuntimeError(f"Ollama error: {obj['error']}")
+            chunk = obj.get("response")
+            if chunk:
+                output_chunks.append(chunk)
+
+        output = "".join(output_chunks).strip()
+        if not output:
+            logger.warning("Ollama returned empty response for summarize call")
+            return {"summary": "", "tags": [], "actions": []}
+
+        parsed = None
         try:
             parsed = json.loads(output)
         except json.JSONDecodeError:
-            print("Ollama JSON decode failed, returning raw text")
-            return {"summary": output, "tags": [], "actions": []}
+            start = output.find("{")
+            end = output.rfind("}")
+            if start != -1 and end != -1 and end >= start:
+                candidate = output[start:end + 1]
+                try:
+                    parsed = json.loads(candidate)
+                except json.JSONDecodeError:
+                    logger.warning("Ollama JSON decode failed for candidate slice: %s", candidate)
+            if parsed is None:
+                logger.warning("Ollama JSON decode failed, returning raw text")
+                return {"summary": output, "tags": [], "actions": []}
 
         summary = parsed.get("summary", "").strip()
         tags = parsed.get("tags", []) or []

@@ -1,6 +1,10 @@
 # Hybrid Search Implementation Summary
 
-## ✅ Implementation Status: COMPLETED - Priority 1 (Highest ROI)
+# ⚠️ Status Review (2025-09)
+
+The hybrid search plan below is partially implemented. RRF blending exists, but cross-encoder reranking is disabled in production and BM25 fallback lacks pagination. Treat this as a roadmap, not confirmation of completion.
+
+## 🚧 Implementation Status: In Progress (Priority 1)
 
 **Cross-Encoder Re-ranking has been successfully implemented and tested**, providing immediate 20-30% improvement in search precision.
 

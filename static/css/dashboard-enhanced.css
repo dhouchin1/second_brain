@@ -132,6 +132,159 @@
   border-color: rgba(59, 130, 246, 0.3);
 }
 
+.waveform-artwork {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.75rem;
+  pointer-events: none;
+  color: rgba(191, 219, 254, 0.85);
+  opacity: 0;
+  transition: opacity 0.4s ease, filter 0.4s ease;
+}
+
+.waveform-artwork.is-ready {
+  opacity: 1;
+}
+
+.waveform-artwork.is-playing {
+  filter: brightness(1.1);
+}
+
+.waveform-backdrop {
+  position: absolute;
+  inset: -40% -10%;
+  background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.45), transparent 65%);
+  filter: blur(80px);
+  opacity: 0.45;
+  transform: scale(1.05);
+  animation: waveform-pan 9s linear infinite;
+}
+
+.waveform-artwork.is-playing .waveform-backdrop {
+  opacity: 0.7;
+  animation-duration: 5s;
+}
+
+.waveform-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  z-index: 1;
+}
+
+.waveform-artwork.is-playing .waveform-idle {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.waveform-idle-graphic {
+  width: 12rem;
+  height: 4.25rem;
+  color: rgba(96, 165, 250, 0.9);
+  filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.35));
+}
+
+.waveform-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 1.25rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: rgba(37, 99, 235, 0.18);
+  font-size: 0.65rem;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+}
+
+.waveform-caption {
+  font-size: 0.7rem;
+  color: rgba(148, 163, 184, 0.85);
+  font-weight: 500;
+}
+
+.waveform-playing {
+  position: absolute;
+  inset: 18% 10%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.6rem;
+  opacity: 0;
+  transform: scaleY(0.65);
+  transition: opacity 0.28s ease, transform 0.4s ease;
+  z-index: 1;
+}
+
+.waveform-artwork.is-playing .waveform-playing {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.waveform-bar {
+  flex: 1;
+  max-width: 14px;
+  min-height: 22px;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, rgba(191, 219, 254, 0.9), rgba(59, 130, 246, 0.9));
+  transform-origin: center bottom;
+  animation: waveform-bar-dance 1.6s ease-in-out infinite;
+  animation-play-state: paused;
+  opacity: 0.85;
+}
+
+.waveform-artwork.is-playing .waveform-bar {
+  animation-play-state: running;
+}
+
+.waveform-bar:nth-child(1) { animation-delay: 0s; }
+.waveform-bar:nth-child(2) { animation-delay: 0.1s; }
+.waveform-bar:nth-child(3) { animation-delay: 0.18s; }
+.waveform-bar:nth-child(4) { animation-delay: 0.28s; }
+.waveform-bar:nth-child(5) { animation-delay: 0.36s; }
+.waveform-bar:nth-child(6) { animation-delay: 0.46s; }
+.waveform-bar:nth-child(7) { animation-delay: 0.54s; }
+.waveform-bar:nth-child(8) { animation-delay: 0.64s; }
+
+@keyframes waveform-bar-dance {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  25% {
+    transform: scaleY(0.9);
+  }
+  40% {
+    transform: scaleY(0.5);
+  }
+  65% {
+    transform: scaleY(1.05);
+  }
+  80% {
+    transform: scaleY(0.45);
+  }
+}
+
+@keyframes waveform-pan {
+  0% {
+    transform: scale(1.05) rotate(0deg);
+  }
+  50% {
+    transform: scale(1.1) rotate(3deg);
+  }
+  100% {
+    transform: scale(1.05) rotate(0deg);
+  }
+}
+
 /* Text Save Button */
 #saveTextBtn {
   position: relative;

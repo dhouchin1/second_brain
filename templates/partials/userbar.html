@@ -1,5 +1,6 @@
 <div class="absolute right-6 top-6 flex items-center gap-3">
   {% if user and user.username %}
+    <a href="/web/jobs" class="text-blue-200 text-sm underline hover:text-blue-100">Snapshot Jobs</a>
     <span class="text-blue-200 text-sm">Logged in as <strong>{{ user.username }}</strong></span>
     <form method="post" action="/logout" onsubmit="return confirm('Log out?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

@@ -1,4 +1,4 @@
-# 🎉 Ultimate RAG Implementation - COMPLETE!
+# ⚠️ Ultimate RAG Implementation Status (2025-09)
 
 ## 🏆 Mission Accomplished
 
@@ -6,7 +6,9 @@
 
 ---
 
-## ✅ Implementation Status: 100% COMPLETE
+> Cross-encoder reranking and BM25 tuning are still in flight; we do not have automated evaluation. Treat this doc as the target architecture.
+
+## 🚧 Implementation Status: In Progress
 
 ### Priority 1: Cross-Encoder Re-ranking ✅ COMPLETED
 - **Status**: Production ready with cached models

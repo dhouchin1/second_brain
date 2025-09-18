@@ -42,10 +42,6 @@
   </style>
 </head>
 <body class="{% block body_class %}{% endblock %}">
-  <script>
-    // Provide SSE token globally if available
-    window.SSE_TOKEN = '{{ sse_token if sse_token is defined else "" }}';
-  </script>
   {% include 'partials/header.html' %}
   {% include 'partials/userbar.html' %}
   {% include 'partials/flash.html' %}

@@ -1,0 +1,202 @@
+# Second Brain - Production Docker Compose
+# Complete production stack with database, cache, and monitoring
+
+version: '3.8'
+
+services:
+  # Main application
+  secondbrain:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: secondbrain-app
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Application data
+      - ./vault:/var/www/secondbrain/vault
+      - ./audio:/var/www/secondbrain/audio
+      - ./uploads:/var/www/secondbrain/uploads
+      - secondbrain_data:/var/www/secondbrain/data
+      
+      # Configuration
+      - ./deploy/config/production.env:/etc/secondbrain/production.env:ro
+      
+      # SSL certificates (Let's Encrypt)
+      - letsencrypt_certs:/etc/letsencrypt
+      - letsencrypt_www:/var/www/letsencrypt
+      
+      # Logs
+      - secondbrain_logs:/var/log/secondbrain
+      - nginx_logs:/var/log/nginx
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://secondbrain:${POSTGRES_PASSWORD}@postgres:5432/secondbrain
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./deploy/config/production.env
+    networks:
+      - secondbrain_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: secondbrain-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: secondbrain
+      POSTGRES_USER: secondbrain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"  # Only bind to localhost
+    networks:
+      - secondbrain_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secondbrain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis cache and message broker
+  redis:
+    image: redis:7-alpine
+    container_name: secondbrain-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"  # Only bind to localhost
+    networks:
+      - secondbrain_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # Let's Encrypt certificate management
+  certbot:
+    image: certbot/certbot
+    container_name: secondbrain-certbot
+    volumes:
+      - letsencrypt_certs:/etc/letsencrypt
+      - letsencrypt_www:/var/www/letsencrypt
+    command: certonly --webroot --webroot-path=/var/www/letsencrypt --email ${LETSENCRYPT_EMAIL} --agree-tos --no-eff-email -d ${DOMAIN_NAME}
+    depends_on:
+      - secondbrain
+    networks:
+      - secondbrain_network
+    profiles:
+      - ssl
+
+  # Monitoring with Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: secondbrain-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - secondbrain_network
+    profiles:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # Grafana dashboard (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: secondbrain-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - secondbrain_network
+    profiles:
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+# Named volumes for persistent data
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  secondbrain_data:
+    driver: local
+  secondbrain_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+  letsencrypt_certs:
+    driver: local
+  letsencrypt_www:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Network for service communication
+networks:
+  secondbrain_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

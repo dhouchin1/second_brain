@@ -5,6 +5,8 @@ FastAPI router for web content ingestion with Playwright integration.
 Provides endpoints for URL processing and integrates with Smart Automation.
 """
 
+from __future__ import annotations
+
 from typing import List, Optional
 import re
 
@@ -39,12 +41,46 @@ def init_web_ingestion_router(get_conn_func, workflow_engine: WorkflowEngine, ge
     url_workflow = UrlDetectionWorkflow(web_ingestion_service)
 
 
+def _build_config_from_request(request_model: UrlIngestionRequest | BulkUrlRequest):
+    if not web_ingestion_service:
+        base_config = ExtractionConfig.from_settings()
+    else:
+        base_config = web_ingestion_service.get_default_config().override()
+
+    overrides = {
+        "capture_screenshot": getattr(request_model, "capture_screenshot", None),
+        "capture_pdf": getattr(request_model, "capture_pdf", None),
+        "capture_html": getattr(request_model, "capture_html", None),
+        "download_original": getattr(request_model, "download_original", None),
+        "download_media": getattr(request_model, "download_media", None),
+        "fetch_captions": getattr(request_model, "fetch_captions", None),
+        "extract_images": getattr(request_model, "extract_images", None),
+        "timeout": getattr(request_model, "timeout", None),
+    }
+
+    legacy_screenshot = getattr(request_model, "take_screenshot", None)
+    if overrides["capture_screenshot"] is None and legacy_screenshot is not None:
+        overrides["capture_screenshot"] = legacy_screenshot
+
+    async_mode = getattr(request_model, "async_mode", None)
+
+    return base_config.override(**overrides), async_mode
+
+
 # ─── Request/Response Models ───
 
 class BulkUrlRequest(BaseModel):
     urls: List[str]
-    take_screenshot: bool = True
-    timeout: int = 30
+    capture_screenshot: Optional[bool] = None
+    capture_pdf: Optional[bool] = None
+    capture_html: Optional[bool] = None
+    download_original: Optional[bool] = None
+    download_media: Optional[bool] = None
+    fetch_captions: Optional[bool] = None
+    extract_images: Optional[bool] = None
+    timeout: Optional[int] = None
+    take_screenshot: Optional[bool] = None
+    async_mode: Optional[bool] = None
 
 
 class QuickCaptureRequest(BaseModel):
@@ -64,6 +100,18 @@ class QuickCaptureResponse(BaseModel):
 class UrlDetectionResponse(BaseModel):
     urls_found: List[str]
     valid_urls: List[str]
+
+
+class JobStatus(BaseModel):
+    job_id: str
+    url: str
+    status: str
+    note_id: Optional[int] = None
+    title: Optional[str] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
 
 
 # ─── URL Processing Endpoints ───
@@ -87,21 +135,20 @@ async def ingest_url(
         raise HTTPException(status_code=400, detail="Invalid URL format")
     
     # Configure extraction
-    config = ExtractionConfig(
-        take_screenshot=request.take_screenshot,
-        extract_images=request.extract_images,
-        timeout=request.timeout
-    )
-    
+    config, async_mode = _build_config_from_request(request)
+
     try:
         result = await web_ingestion_service.ingest_url(
             request.url, 
             current_user.id,
-            config=config
+            config=config,
+            async_mode=async_mode
         )
         
         return UrlIngestionResponse(**result)
         
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
@@ -131,16 +178,13 @@ async def ingest_bulk_urls(
     
     # Process URLs in background
     async def process_urls():
-        config = ExtractionConfig(
-            take_screenshot=request.take_screenshot,
-            timeout=request.timeout
-        )
+        config, async_mode = _build_config_from_request(request)
         
         results = []
         for url in valid_urls:
             try:
                 result = await web_ingestion_service.ingest_url(
-                    url, current_user.id, config=config
+                    url, current_user.id, config=config, async_mode=async_mode
                 )
                 results.append({"url": url, "success": True, "note_id": result.get("note_id")})
             except Exception as e:
@@ -169,6 +213,23 @@ async def detect_urls(content: str):
         urls_found=urls_found,
         valid_urls=valid_urls
     )
+
+
+@router.get("/jobs", response_model=List[JobStatus])
+async def list_jobs(limit: int = 50, fastapi_request: Request = None):
+    if not web_ingestion_service:
+        raise HTTPException(status_code=500, detail="Web ingestion service not initialized")
+
+    current_user = await get_current_user(fastapi_request)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        jobs = web_ingestion_service.list_jobs(current_user.id, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve jobs: {exc}")
+
+    return [JobStatus(**job) for job in jobs]
 
 
 # ─── Smart Capture Enhancement ───
@@ -234,12 +295,12 @@ async def smart_capture(
         # Process URLs in background
         async def process_urls_background():
             nonlocal web_extractions
-            config = ExtractionConfig(take_screenshot=True, timeout=30)
+            config = web_ingestion_service.get_default_config().override()
             
             for url in valid_urls[:3]:  # Limit to 3 URLs
                 try:
                     result = await web_ingestion_service.ingest_url(
-                        url, current_user.id, config=config
+                        url, current_user.id, config=config, async_mode=False
                     )
                     web_extractions.append({
                         "url": url,

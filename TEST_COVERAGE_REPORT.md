@@ -3,10 +3,12 @@
 ## Overview
 Comprehensive unit and integration testing for all enhanced capture system components, ensuring reliability, maintainability, and quality assurance for the Second Brain platform.
 
-## ✅ Test Suite Completion Status
+## ⚠️ Test Suite Status (2025-09 Review)
+
+> Only **58 of 77** tests currently pass locally (≈75%). Several suites referenced below have never been implemented. The sections remain as the intended target state, but we should treat them as a backlog rather than confirmed coverage.
 
 ### 1. **Unified Capture Service Tests** (`test_unified_capture_service.py`)
-- ✅ **16 test cases** covering core unified capture functionality
+- 🚧 **Planned:** 16 test cases covering core functionality *(file missing)*
 - ✅ Service initialization and configuration
 - ✅ Text capture with AI processing
 - ✅ Image OCR capture routing
@@ -20,7 +22,7 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 - ✅ Content formatting and metadata handling
 
 ### 2. **Advanced Capture Service Tests** (`test_advanced_capture_service.py`)
-- ✅ **18 test cases** for advanced capture features
+- 🚧 **Pending implementation** – suite not present
 - ✅ OCR processing with pytesseract integration
 - ✅ PDF text extraction with PyMuPDF
 - ✅ YouTube transcript processing
@@ -33,7 +35,7 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 - ✅ File format validation and security
 
 ### 3. **Apple Shortcuts Service Tests** (`test_enhanced_apple_shortcuts_service.py`)
-- ✅ **17 test cases** for iOS/macOS integration
+- ✅ Exists (7 tests); ❗ additional scenarios pending
 - ✅ Voice memo processing with transcription
 - ✅ Photo OCR with location data
 - ✅ Quick note capture with different types
@@ -46,7 +48,7 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 - ✅ Validation and input sanitization
 
 ### 4. **Discord Service Tests** (`test_enhanced_discord_service.py`)
-- ✅ **15 test cases** for Discord bot integration
+- 🚧 Planned suite – not yet created
 - ✅ Text note capture with Discord context
 - ✅ Thread conversation summarization
 - ✅ Search integration with hybrid search
@@ -58,8 +60,7 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 - ✅ Error handling and graceful degradation
 - ✅ Special character and emoji support
 
-### 5. **API Integration Tests** (`test_api_integration.py`)
-- ✅ **25+ test cases** for end-to-end API testing
+- ✅ File exists with smoke coverage *(currently 12 passing tests; expand for new endpoints)*
 - ✅ Unified capture REST endpoints
 - ✅ Advanced capture API endpoints
 - ✅ Apple Shortcuts API integration
@@ -70,8 +71,7 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 - ✅ Service interdependency testing
 - ✅ Webhook integration endpoints
 
-### 6. **Comprehensive Test Infrastructure** (`test_fixtures.py`)
-- ✅ **Database fixtures** with temporary SQLite setup
+- ✅ Fixtures in place, but need refresh for new realtime features
 - ✅ **Sample data generators** for all content types
 - ✅ **Mock services** for external dependencies
 - ✅ **Test scenarios** for complex workflows
@@ -80,23 +80,20 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 
 ## 🔧 Test Infrastructure Features
 
-### **Test Runner** (`run_enhanced_tests.py`)
-- ✅ **Automated test execution** with detailed reporting
+- 🚧 Script outlined but not checked into repo
 - ✅ **Performance metrics** and timing analysis
 - ✅ **Coverage reporting** with HTML output
 - ✅ **Parallel execution** support
 - ✅ **Selective test running** by pattern or marker
 - ✅ **CI/CD integration** ready
 
-### **Configuration** (`pytest.ini`)
-- ✅ **Structured test organization** with markers
+- ✅ Basic config exists; markers & coverage thresholds still TODO
 - ✅ **Coverage thresholds** (80% minimum)
 - ✅ **Async testing support** for all services
 - ✅ **Warning filters** for clean output
 - ✅ **HTML and XML reports** for CI integration
 
-### **Dependencies** (`requirements-test.txt`)
-- ✅ **pytest** with async and mock support
+- 🚫 File missing – add dedicated test requirements
 - ✅ **Coverage reporting** tools
 - ✅ **Performance benchmarking** utilities
 - ✅ **HTTP testing** for API endpoints
@@ -111,7 +108,7 @@ Comprehensive unit and integration testing for all enhanced capture system compo
 - 💬 **Discord Service**: 15 tests, bot functionality
 - 🌐 **API Integration**: 25+ tests, end-to-end flows
 
-### **Total Test Count: 91+ comprehensive test cases**
+- Current executed tests: **58/77** passing (per `second_brain.PRD` status log)
 
 ### **Coverage Areas**
 - ✅ **Unit Tests**: Individual component functionality

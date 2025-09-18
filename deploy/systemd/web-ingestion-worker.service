@@ -1,0 +1,17 @@
+[Unit]
+Description=Second Brain Web Ingestion Worker
+After=network.target redis.service secondbrain.service
+Requires=redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/secondbrain
+EnvironmentFile=/etc/secondbrain.env
+ExecStart=/opt/secondbrain/venv/bin/python scripts/web_ingestion_worker.py
+Restart=on-failure
+RestartSec=5
+User=secondbrain
+Group=secondbrain
+
+[Install]
+WantedBy=multi-user.target

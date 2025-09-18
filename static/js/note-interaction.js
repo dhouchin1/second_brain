@@ -275,7 +275,7 @@ class NoteInteraction {
     }
   }
   
-  initializeAudioPlayer() {
+  async initializeAudioPlayer() {
     if (!this.audioFilename) return;
     
     try {
@@ -314,7 +314,35 @@ class NoteInteraction {
         }
       });
       
-      this.waveform.load(`/audio/${this.audioFilename}`);
+      // Fetch audio file with credentials and load as blob
+      try {
+        const response = await fetch(`/audio/${this.audioFilename}`, {
+          credentials: 'same-origin'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Audio fetch failed: ${response.status} ${response.statusText}`);
+        }
+        
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        this.waveform.load(audioUrl);
+        
+        // Clean up the blob URL when the audio is ready or on error
+        this.waveform.on('destroy', () => {
+          URL.revokeObjectURL(audioUrl);
+        });
+        
+      } catch (audioFetchError) {
+        console.error('Failed to fetch audio file:', audioFetchError);
+        const loading = waveformContainer.querySelector('.waveform-loading');
+        if (loading) {
+          loading.innerHTML = '<span style="color: var(--color-error-500);">Failed to load audio file</span>';
+        }
+        // Fall back to basic HTML5 audio
+        await this.initializeFallbackAudio();
+        return;
+      }
       
       // Setup audio controls
       const playPauseBtn = document.getElementById('playPauseBtn');
@@ -352,19 +380,52 @@ class NoteInteraction {
     } catch (error) {
       console.error('Failed to initialize audio player:', error);
       // Fallback to basic HTML5 audio
-      this.initializeFallbackAudio();
+      await this.initializeFallbackAudio();
     }
   }
   
-  initializeFallbackAudio() {
+  async initializeFallbackAudio() {
     const waveformContainer = document.getElementById('waveform');
     if (waveformContainer) {
-      waveformContainer.innerHTML = `
-        <audio controls style="width: 100%; border-radius: var(--radius-md);">
-          <source src="/audio/${this.audioFilename}" type="audio/wav">
-          Your browser does not support audio playback.
-        </audio>
-      `;
+      try {
+        // Fetch audio file with credentials for fallback audio too
+        const response = await fetch(`/audio/${this.audioFilename}`, {
+          credentials: 'same-origin'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Audio fetch failed: ${response.status} ${response.statusText}`);
+        }
+        
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        waveformContainer.innerHTML = `
+          <audio controls style="width: 100%; border-radius: var(--radius-md);">
+            <source src="${audioUrl}" type="audio/wav">
+            Your browser does not support audio playback.
+          </audio>
+        `;
+        
+        // Clean up blob URL when audio element is removed
+        const audioElement = waveformContainer.querySelector('audio');
+        if (audioElement) {
+          audioElement.addEventListener('loadstart', () => {
+            // Audio is loading, keep the URL
+          });
+          audioElement.addEventListener('error', () => {
+            URL.revokeObjectURL(audioUrl);
+          });
+        }
+        
+      } catch (error) {
+        console.error('Failed to load fallback audio:', error);
+        waveformContainer.innerHTML = `
+          <div style="padding: 16px; text-align: center; color: var(--color-error-500);">
+            Failed to load audio file
+          </div>
+        `;
+      }
     }
   }
   

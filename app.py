@@ -6,6 +6,7 @@ from obsidian_sync import ObsidianSync
 from file_processor import FileProcessor
 import sqlite3
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 from fastapi import (
     FastAPI,
     Request,
@@ -22,10 +23,17 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import RedirectResponse, FileResponse, JSONResponse, Response
+from fastapi.responses import RedirectResponse, FileResponse, JSONResponse, Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from collections import defaultdict
 import pathlib
 import json
@@ -41,6 +49,11 @@ from services.auth_service import AuthService, Token, TokenData, User, UserInDB,
 from services.webhook_service import WebhookService
 from services.upload_service import UploadService
 from services.analytics_service import AnalyticsService
+from services.notification_service import get_notification_service, notify_processing_started, notify_processing_completed, notify_processing_failed, notify_note_created
+from services.notification_router import router as notification_router, init_notification_router
+from services.websocket_manager import get_connection_manager
+from services.realtime_events import notify_note_update, schedule_note_update
+from services.web_ingestion_service import WebIngestionService
 
 try:
     from realtime_status import create_status_endpoint
@@ -54,6 +67,7 @@ try:
 except ImportError:
     process_note_with_status = None  # type: ignore
 from markupsafe import Markup, escape
+from bs4 import BeautifulSoup
 import re
 from config import settings
 from passlib.context import CryptContext
@@ -63,8 +77,104 @@ from markdown_writer import save_markdown, safe_filename
 from audio_utils import transcribe_audio
 from typing import Optional, List, Dict
 
-# ---- FastAPI Setup ----
-app = FastAPI()
+# ---- Security Middleware Classes ----
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware to add security headers to all responses."""
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Security headers for production deployment
+        # Allow-listed CDNs needed by our templates (Tailwind + Google Fonts)
+        tailwind_cdn = "https://cdn.tailwindcss.com"
+        gfonts_css = "https://fonts.googleapis.com"
+        gfonts_static = "https://fonts.gstatic.com"
+
+        if settings.is_production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            # Production CSP: locked down but allow required CDNs
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'unsafe-inline' 'unsafe-eval' {tailwind_cdn}; "
+                f"style-src 'self' 'unsafe-inline' {gfonts_css}; "
+                "img-src 'self' data: blob:; "
+                f"font-src 'self' data: {gfonts_static}; "
+                "connect-src 'self'; "
+                "media-src 'self' blob:; "
+                "object-src 'none'; "
+                "base-uri 'self'; "
+                "frame-ancestors 'none'"
+            )
+        else:
+            # More permissive CSP for development to unblock local testing
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'unsafe-inline' 'unsafe-eval' {tailwind_cdn}; "
+                f"style-src 'self' 'unsafe-inline' {gfonts_css}; "
+                "img-src 'self' data: blob:; "
+                f"font-src 'self' data: {gfonts_static}; "
+                "connect-src 'self' ws: wss:; "
+                "media-src 'self' blob:; "
+                "object-src 'none'"
+            )
+        
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=(), "
+            "payment=(), usb=(), magnetometer=(), gyroscope=(), "
+            "accelerometer=(), ambient-light-sensor=()"
+        )
+        
+        return response
+
+
+# ---- FastAPI Setup with Lifespan ----
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await _startup_tasks()
+    yield
+    # Shutdown (if needed)
+    pass
+
+async def _startup_tasks():
+    """Combined startup tasks from legacy on_event handlers"""
+    # Ensure directories exist
+    _ensure_base_directories()
+
+    # Start background workers
+    await _start_worker()
+    await _start_automation()
+    await _start_audio_worker()
+
+app = FastAPI(lifespan=lifespan)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ---- Security Middleware Configuration ----
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_credentials,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+    allow_headers=["*"],
+)
+
+# Add rate limiting middleware
+app.add_middleware(SlowAPIMiddleware)
+
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 templates = Jinja2Templates(directory=str(settings.base_dir / "templates"))
 app.mount("/static", StaticFiles(directory=str(settings.base_dir / "static")), name="static")
 
@@ -76,7 +186,6 @@ if REALTIME_AVAILABLE:
         # Non-fatal if realtime endpoints cannot be registered
         pass
 
-@app.on_event("startup")
 def _ensure_base_directories():
     """Ensure base filesystem locations exist for vault/uploads/audio.
 
@@ -86,6 +195,9 @@ def _ensure_base_directories():
         # Uploads and audio (app-local)
         pathlib.Path(settings.uploads_dir).mkdir(parents=True, exist_ok=True)
         pathlib.Path(settings.audio_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(settings.media_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(settings.snapshots_dir).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(settings.videos_dir).mkdir(parents=True, exist_ok=True)
         # Obsidian vault and subdirs
         v = pathlib.Path(settings.vault_path)
         if not v.is_absolute():
@@ -140,12 +252,14 @@ def render_page(request: Request, template_name: str, context: dict):
     if not token:
         token = secrets.token_urlsafe(32)
     ctx["csrf_token"] = token
-    # Inject SSE token for realtime auth on any page where a user is present
+    # Ensure SSE token placeholder is available for templates. The client now
+    # relies on cookie-authenticated EventSource connections, so we no longer
+    # issue signed tokens by default.
+    ctx["sse_token"] = ""
     try:
         u = ctx.get("user") or get_current_user_silent(request)
-        if u:
-            # Longer-lived token to avoid frequent SSE reconnect 401s
-            ctx["sse_token"] = create_file_token(u.id, "sse", ttl_seconds=60*60*8)
+        if u and "user" not in ctx:
+            ctx["user"] = u
     except Exception:
         pass
 
@@ -503,12 +617,9 @@ from services.search_router import router as search_router, init_search_router
 init_search_router(get_conn, get_current_user, get_current_user_silent)
 app.include_router(search_router)
 
-# --- Include Vault Seeding Router ---
-from services.vault_seeding_router import router as seeding_router, init_vault_seeding_router
+# --- Include Diagnostics Router ---
 from services.diagnostics_router import router as diagnostics_router, init_diagnostics_router
-init_vault_seeding_router(get_conn, get_current_user)
 init_diagnostics_router(get_conn, get_current_user)
-app.include_router(seeding_router)
 app.include_router(diagnostics_router)
 
 # --- Include Search Benchmarking Router ---
@@ -516,10 +627,6 @@ from services.search_benchmarking_router import router as benchmarking_router, i
 init_search_benchmarking_router(get_conn)
 app.include_router(benchmarking_router)
 
-# Initialize Interactive Seeding router
-from services.interactive_seeding_router import router as interactive_seeding_router, init_interactive_seeding_router
-init_interactive_seeding_router(get_conn)
-app.include_router(interactive_seeding_router)
 
 # ---- Advanced Capture Router ----
 from services.advanced_capture_router import router as advanced_capture_router, init_advanced_capture_router
@@ -541,6 +648,10 @@ from services.enhanced_discord_router import router as enhanced_discord_router, 
 init_enhanced_discord_router(get_conn)
 app.include_router(enhanced_discord_router)
 
+# ---- Notification Router ----
+init_notification_router(get_current_user)
+app.include_router(notification_router)
+
 # ---- Demo Data Router ----
 try:
     from services.demo_data_router import router as demo_data_router
@@ -548,27 +659,7 @@ try:
 except ImportError:
     print("Demo data router not available")
 
-# --- Auto-seeding and Initialization ---
-from services.initialization_service import get_initialization_service
 
-async def _perform_auto_seeding_initialization():
-    """Perform auto-seeding for fresh installations (non-blocking background task)."""
-    try:
-        init_service = get_initialization_service(get_conn)
-        
-        if init_service.is_fresh_installation():
-            print("[STARTUP] Fresh installation detected, performing auto-seeding...")
-            result = init_service.perform_first_run_setup()
-            
-            if result["success"]:
-                print(f"[STARTUP] Auto-seeding completed: {result.get('message', 'Success')}")
-            else:
-                print(f"[STARTUP] Auto-seeding failed: {result.get('error', 'Unknown error')}")
-        else:
-            print("[STARTUP] Existing installation detected, skipping auto-seeding")
-            
-    except Exception as e:
-        print(f"[STARTUP] Auto-seeding initialization failed: {e}")
 
 # --- Simple FIFO job worker for note processing ---
 import asyncio
@@ -639,20 +730,18 @@ async def job_worker():
                 break
         await asyncio.sleep(0.2 if spawned or active else 1.0)
 
-@app.on_event("startup")
 async def _start_worker():
     if getattr(app.state, "job_worker_started", False):
         return
     app.state.job_worker_started = True
     asyncio.create_task(job_worker())
 
-@app.on_event("startup")
 async def _start_automation():
     """Start automated relationship discovery system"""
     if getattr(app.state, "automation_started", False):
         return
     app.state.automation_started = True
-    
+
     # TEMPORARILY DISABLED to resolve database locking issues
     # try:
     #     from automated_relationships import get_automation_engine
@@ -664,47 +753,33 @@ async def _start_automation():
     #     print("⚠️  Automated relationships not available")
     print("⚠️  Automated relationship discovery temporarily disabled to resolve database locking")
 
-@app.on_event("startup")
-async def _perform_auto_seeding_initialization():
-    """Perform auto-seeding initialization for fresh installations."""
-    if getattr(app.state, "auto_seeding_initialized", False):
+async def _start_audio_worker():
+    """Start automated audio processing worker"""
+    if getattr(app.state, "audio_worker_started", False):
         return
-    app.state.auto_seeding_initialized = True
-    
-    try:
-        from services.initialization_service import get_initialization_service
-        
-        # Run initialization in background to avoid blocking startup
-        async def perform_initialization():
+    app.state.audio_worker_started = True
+
+    async def audio_processing_worker():
+        """Background worker that processes audio queue regularly"""
+        from tasks import process_audio_queue
+
+        while True:
             try:
-                init_service = get_initialization_service(get_conn)
-                
-                # Check if this is a fresh installation
-                if init_service.is_fresh_installation():
-                    print("🌱 Fresh installation detected, performing first-run setup...")
-                    result = init_service.perform_first_run_setup()
-                    
-                    if result["success"]:
-                        print(f"✅ First-run setup completed: {result['message']}")
-                        if "auto_seeding_result" in result:
-                            seeding_result = result["auto_seeding_result"]
-                            if seeding_result.get("success"):
-                                print(f"🌱 Auto-seeding successful: {seeding_result.get('message', 'Content seeded')}")
-                            else:
-                                print(f"⚠️  Auto-seeding skipped: {seeding_result.get('reason', 'Unknown reason')}")
-                    else:
-                        print(f"❌ First-run setup failed: {result.get('error', 'Unknown error')}")
-                else:
-                    print("ℹ️  Existing installation detected, skipping auto-seeding initialization")
-                    
+                # Process one item from the audio queue
+                process_audio_queue()
+                # Wait 10 seconds before checking again
+                await asyncio.sleep(10)
             except Exception as e:
-                print(f"❌ Auto-seeding initialization failed: {e}")
-        
-        # Create background task for initialization
-        asyncio.create_task(perform_initialization())
-        
-    except ImportError as e:
-        print(f"⚠️  Auto-seeding initialization not available: {e}")
+                print(f"Audio worker error: {e}")
+                # Wait longer on errors to avoid spam
+                await asyncio.sleep(30)
+
+    asyncio.create_task(audio_processing_worker())
+    print("🎵 Audio processing worker started (checking every 10 seconds)")
+    queue_stats = audio_queue.get_queue_status()
+    queued_count = queue_stats.get('status_counts', {}).get('queued', 0)
+    print(f"📊 Found {queued_count} items in audio processing queue")
+
 
 # Add real-time status endpoints if available
 if REALTIME_AVAILABLE:
@@ -748,21 +823,6 @@ async def search_page(request: Request):
         return RedirectResponse("/login", status_code=302)
     return render_page(request, "search.html", {"user": user})
 
-@app.get("/vault/seeding")
-async def vault_seeding_page(request: Request):
-    """Vault seeding interface for adding starter content"""
-    user = get_current_user_silent(request)
-    if not user:
-        return RedirectResponse("/login", status_code=302)
-    return render_page(request, "vault_seeding.html", {"user": user})
-
-@app.get("/interactive-seeding")
-async def interactive_seeding_page(request: Request):
-    """Interactive seeding interface for guided content collection"""
-    user = get_current_user_silent(request)
-    if not user:
-        return RedirectResponse("/login", status_code=302)
-    return render_page(request, "interactive_seeding.html", {"user": user})
 
 # Auth endpoints moved to services/auth_service.py
 
@@ -1173,8 +1233,6 @@ def enhanced_capture_dashboard(request: Request):
 @app.get("/")
 def dashboard(
     request: Request,
-    q: str = "",
-    tag: str = "",
 ):
     current_user = get_current_user_silent(request)
     if not current_user:
@@ -1182,27 +1240,11 @@ def dashboard(
         return render_page(request, "landing.html", {})
     conn = get_conn()
     c = conn.cursor()
-    if q:
-        rows = c.execute(
-            """
-            SELECT n.*
-            FROM notes_fts fts
-            JOIN notes n ON n.id = fts.rowid
-            WHERE notes_fts MATCH ? AND n.user_id = ?
-            ORDER BY COALESCE(n.timestamp, n.created_at) DESC LIMIT 100
-        """,
-            (q, current_user.id),
-        ).fetchall()
-    elif tag:
-        rows = c.execute(
-            "SELECT * FROM notes WHERE tags LIKE ? AND user_id = ? ORDER BY COALESCE(timestamp, created_at) DESC",
-            (f"%{tag}%", current_user.id),
-        ).fetchall()
-    else:
-        rows = c.execute(
-            "SELECT * FROM notes WHERE user_id = ? ORDER BY COALESCE(timestamp, created_at) DESC LIMIT 100",
-            (current_user.id,),
-        ).fetchall()
+    # Always load recent notes without URL parameters
+    rows = c.execute(
+        "SELECT * FROM notes WHERE user_id = ? ORDER BY COALESCE(timestamp, created_at) DESC LIMIT 100",
+        (current_user.id,),
+    ).fetchall()
     notes = [dict(zip([col[0] for col in c.description], row)) for row in rows]
     
     # Helpers to compute metadata for display
@@ -1286,8 +1328,7 @@ def dashboard(
             mt = (n.get("file_mime_type") or "").lower()
             typ = (n.get("type") or "").lower()
             if ff and (ft == "image" or typ == "image" or mt.startswith("image/") or ft == "document" or mt == "application/pdf"):
-                tok = create_file_token(current_user.id, ff, ttl_seconds=600)
-                n["file_url"] = f"/files/{ff}?token={tok}"
+                n["file_url"] = f"/files/{ff}"
         except Exception:
             # Non-fatal; previews just won't render
             pass
@@ -1335,8 +1376,7 @@ def dashboard(
         typ = (item.get("type") or "").lower()
         try:
             if ff and (ft == "image" or typ == "image" or mt.startswith("image/") or ft == "document" or mt == "application/pdf"):
-                tok = create_file_token(current_user.id, ff, ttl_seconds=600)
-                item["file_url"] = f"/files/{ff}?token={tok}"
+                item["file_url"] = f"/files/{ff}"
         except Exception:
             pass
         # Add lightweight metadata for recent list (duration if audio)
@@ -1347,20 +1387,8 @@ def dashboard(
         except Exception:
             pass
         recent_notes.append(item)
-    return render_page(
-        request,
-        "dashboard.html",
-        {
-            "notes_by_day": dict(notes_by_day),
-            "q": q,
-            "tag": tag,
-            "last_sync": get_last_sync(),
-            "user": current_user,
-            "recent_notes": recent_notes,
-            # Provide a signed SSE token for auth without headers
-            "sse_token": create_file_token(current_user.id, "sse")
-        },
-    )
+    # For logged-in users, redirect to v3 dashboard by default
+    return RedirectResponse(url="/dashboard/v3", status_code=302)
 
 # =========================
 # Resumable Upload Endpoints
@@ -1534,8 +1562,16 @@ async def audio_queue_health():
     """Public health check for audio queue system"""
     try:
         # Get basic system status without user-specific data
-        total_pending = audio_queue.conn.execute("SELECT COUNT(*) FROM audio_processing_queue WHERE status = 'pending'").fetchone()[0]
-        total_processing = audio_queue.conn.execute("SELECT COUNT(*) FROM audio_processing_queue WHERE status = 'processing'").fetchone()[0]
+        conn = sqlite3.connect(audio_queue.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM audio_processing_queue WHERE status = 'queued'")
+        total_pending = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM audio_processing_queue WHERE status = 'processing'")
+        total_processing = cursor.fetchone()[0]
+        
+        conn.close()
         
         return {
             "status": "healthy",
@@ -1625,7 +1661,7 @@ async def webhook_audio_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     tags: str = Form(""),
-    user_id: int = Form(2)  # Default user ID for webhook (adjust as needed)
+    user_id: int = Form(1)  # Default user ID for webhook (adjust as needed)
 ):
     """
     Fast audio webhook endpoint for Apple Shortcuts and external integrations.
@@ -1734,6 +1770,312 @@ async def create_calendar_event(
 async def get_analytics(current_user: User = Depends(get_current_user)):
     """Get user analytics and insights"""
     return analytics_service.get_user_analytics(current_user)
+
+# Discord Bot Management Endpoints
+@app.get("/api/discord/status")
+async def get_discord_bot_status(current_user: User = Depends(get_current_user)):
+    """Get Discord bot connection status and statistics"""
+    try:
+        # Check if Discord bot is configured
+        import os
+        bot_token = os.getenv('DISCORD_BOT_TOKEN')
+        
+        if not bot_token:
+            return {
+                "connected": False,
+                "error": "Discord bot not configured",
+                "stats": {"messages": 0, "users": 0},
+                "recentActivity": []
+            }
+        
+        # Try to get basic Discord user mapping statistics
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Get Discord user count
+        discord_user_count = c.execute(
+            "SELECT COUNT(*) as count FROM discord_users"
+        ).fetchone()
+        
+        # Get recent Discord activity count
+        recent_activity_count = c.execute(
+            """
+            SELECT COUNT(*) as count 
+            FROM discord_activity_log 
+            WHERE created_at >= datetime('now', '-1 day')
+            """
+        ).fetchone()
+        
+        # Get recent Discord activity for display
+        recent_activities = c.execute(
+            """
+            SELECT discord_username, command, action, description, created_at, success
+            FROM discord_activity_log 
+            ORDER BY created_at DESC 
+            LIMIT 10
+            """
+        ).fetchall()
+        
+        conn.close()
+        
+        # Format activities for frontend
+        formatted_activities = []
+        for activity in recent_activities:
+            icon = "✅" if activity[5] else "❌"  # success
+            if activity[1]:  # command
+                icon = {"save": "💾", "search": "🔍", "upload": "📤", "status": "📊", "help": "❓"}.get(activity[1], "🤖")
+            
+            formatted_activities.append({
+                "user": activity[0] or "Unknown User",
+                "command": activity[1],
+                "action": activity[2],
+                "description": activity[3] or f"Used /{activity[1]}" if activity[1] else activity[2],
+                "timestamp": activity[4],
+                "icon": icon,
+                "success": activity[5]
+            })
+        
+        return {
+            "connected": True,  # Assume connected if token is set
+            "uptime": "Unknown",  # We don't track bot uptime currently
+            "stats": {
+                "messages": recent_activity_count[0] if recent_activity_count else 0,
+                "users": discord_user_count[0] if discord_user_count else 0
+            },
+            "recentActivity": formatted_activities
+        }
+        
+    except Exception as e:
+        return {
+            "connected": False,
+            "error": str(e),
+            "stats": {"messages": 0, "users": 0},
+            "recentActivity": []
+        }
+
+@app.post("/api/discord/test")
+async def test_discord_bot_connection(current_user: User = Depends(get_current_user)):
+    """Test Discord bot connection"""
+    try:
+        import os
+        bot_token = os.getenv('DISCORD_BOT_TOKEN')
+        
+        if not bot_token:
+            return {
+                "success": False,
+                "error": "Discord bot token not configured. Please set DISCORD_BOT_TOKEN environment variable."
+            }
+        
+        # Basic token validation (check format)
+        if not bot_token.startswith(('Bot ', 'mfa.')) and not '.' in bot_token:
+            return {
+                "success": False,
+                "error": "Invalid Discord bot token format"
+            }
+        
+        # For now, just validate token format
+        # In a full implementation, you would make an API call to Discord
+        return {
+            "success": True,
+            "message": "Discord bot token format appears valid",
+            "note": "Bot functionality depends on discord_bot.py being running separately"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Connection test failed: {str(e)}"
+        }
+
+@app.get("/api/discord/activity")
+async def get_discord_activity_logs(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user)
+):
+    """Get Discord bot activity logs with pagination"""
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Get total count
+        total_count = c.execute(
+            "SELECT COUNT(*) as count FROM discord_activity_log"
+        ).fetchone()[0]
+        
+        # Get paginated activity logs
+        activities = c.execute(
+            """
+            SELECT discord_user_id, discord_username, command, action, 
+                   description, created_at, success, error_message, metadata
+            FROM discord_activity_log 
+            ORDER BY created_at DESC 
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset)
+        ).fetchall()
+        
+        conn.close()
+        
+        # Format activities
+        formatted_activities = []
+        for activity in activities:
+            icon = "✅" if activity[6] else "❌"  # success
+            if activity[2]:  # command
+                icon = {
+                    "save": "💾", "search": "🔍", "upload": "📤", "status": "📊", 
+                    "help": "❓", "recent": "📋", "stats": "📈", "sync": "🔄",
+                    "restart": "🔄", "cleanup": "🧹", "tags": "🏷️", "queue": "⏳",
+                    "retry": "🔁", "export": "📤", "duplicate": "📋", "activity": "⚡"
+                }.get(activity[2], "🤖")
+            
+            formatted_activities.append({
+                "id": activity[0],  # discord_user_id
+                "user": activity[1] or "Unknown User",
+                "command": activity[2],
+                "action": activity[3],
+                "description": activity[4] or f"Used /{activity[2]}" if activity[2] else activity[3],
+                "timestamp": activity[5],
+                "success": activity[6],
+                "error": activity[7],
+                "icon": icon,
+                "metadata": activity[8] or "{}"
+            })
+        
+        return {
+            "activities": formatted_activities,
+            "total": total_count,
+            "limit": limit,
+            "offset": offset,
+            "hasMore": offset + limit < total_count
+        }
+        
+    except Exception as e:
+        return {
+            "activities": [],
+            "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "hasMore": False,
+            "error": str(e)
+        }
+
+@app.post("/api/discord/log-activity")
+async def log_discord_activity(
+    discord_user_id: str,
+    action: str,
+    discord_username: str = None,
+    command: str = None,
+    description: str = None,
+    success: bool = True,
+    error_message: str = None,
+    metadata: dict = None
+):
+    """Log Discord bot activity (called by Discord bot)"""
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        import json
+        metadata_json = json.dumps(metadata or {})
+        
+        c.execute(
+            """
+            INSERT INTO discord_activity_log 
+            (discord_user_id, discord_username, command, action, description, success, error_message, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (discord_user_id, discord_username, command, action, description, success, error_message, metadata_json)
+        )
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "Activity logged successfully"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/recent-activity")
+async def get_recent_activity(
+    limit: int = 10,
+    current_user: User = Depends(get_current_user)
+):
+    """Get recent activity for Quick Actions panel"""
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        
+        # Get recent notes
+        recent_notes = c.execute(
+            """
+            SELECT id, title, type, COALESCE(timestamp, created_at, updated_at) AS sort_ts, status
+            FROM notes 
+            WHERE user_id = ?
+            ORDER BY sort_ts DESC 
+            LIMIT ?
+            """,
+            (current_user.id, limit)
+        ).fetchall()
+        
+        # Get recent Discord activities if available
+        recent_discord = []
+        try:
+            recent_discord = c.execute(
+                """
+                SELECT command, action, created_at
+                FROM discord_activity_log 
+                ORDER BY created_at DESC 
+                LIMIT 3
+                """
+            ).fetchall()
+        except:
+            pass  # Table might not exist
+        
+        conn.close()
+        
+        # Format activities
+        activities = []
+        
+        # Add recent notes
+        for note in recent_notes:
+            icon = {"audio": "🎤", "file": "📁", "web": "🌐"}.get(note[2], "📝")
+            activities.append({
+                "type": "note",
+                "icon": icon,
+                "title": note[1] or "Untitled Note",
+                "description": f"Created {note[2] or 'note'}",
+                "timestamp": note[3],
+                "status": note[4],
+                "id": note[0]
+            })
+        
+        # Add recent Discord activities
+        for activity in recent_discord:
+            activities.append({
+                "type": "discord",
+                "icon": "🤖",
+                "title": f"Discord: /{activity[0]}" if activity[0] else "Discord Activity",
+                "description": activity[1] or "Bot interaction",
+                "timestamp": activity[2],
+                "status": "completed"
+            })
+        
+        # Sort by timestamp and limit
+        activities.sort(key=lambda x: x["timestamp"], reverse=True)
+        activities = activities[:limit]
+        
+        return {
+            "activities": activities,
+            "total": len(activities)
+        }
+        
+    except Exception as e:
+        return {
+            "activities": [],
+            "total": 0,
+            "error": str(e)
+        }
 
 # Real-time status updates
 @app.get("/api/notes/{note_id}/status")
@@ -1939,7 +2281,18 @@ def detail(
         return RedirectResponse("/", status_code=302)
     note = dict(zip([col[0] for col in c.description], row))
     related = find_related_notes(note_id, note.get("tags", ""), current_user.id, conn)
-    
+
+    file_metadata_raw = note.get("file_metadata")
+    parsed_file_metadata = {}
+    if file_metadata_raw:
+        try:
+            parsed_file_metadata = json.loads(file_metadata_raw)
+        except Exception:
+            parsed_file_metadata = {}
+    note["file_metadata_json"] = parsed_file_metadata
+    note["snapshot_manifest_path"] = parsed_file_metadata.get("manifest_path")
+    note["snapshot_artifacts"] = parsed_file_metadata.get("artifacts", [])
+
     # Enhance with automated similar notes
     try:
         from ui_enhancements import get_ui_enhancer
@@ -1970,16 +2323,205 @@ def detail(
     # Build signed file URL if file exists
     file_url = None
     if note.get("file_filename"):
-        try:
-            tok = create_file_token(current_user.id, note["file_filename"], ttl_seconds=600)
-            file_url = f"/files/{note['file_filename']}?token={tok}"
-        except Exception:
-            file_url = f"/files/{note['file_filename']}"
+        file_url = f"/files/{note['file_filename']}"
     return render_page(
         request,
         "detail.html",
         {"note": note, "related": related, "user": current_user, "file_url": file_url},
     )
+
+
+@app.get("/snapshot/{note_id}")
+def snapshot_view(request: Request, note_id: int):
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+
+    conn = get_conn()
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT * FROM notes WHERE id = ? AND user_id = ?",
+        (note_id, current_user.id),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return RedirectResponse("/", status_code=302)
+
+    columns = [col[0] for col in c.description]
+    note = dict(zip(columns, row))
+    conn.close()
+    file_metadata_raw = note.get("file_metadata")
+    file_metadata = {}
+    if file_metadata_raw:
+        try:
+            file_metadata = json.loads(file_metadata_raw)
+        except Exception:
+            file_metadata = {}
+
+    manifest_path = file_metadata.get("manifest_path")
+    manifest = {}
+    if manifest_path:
+        try:
+            manifest_file = pathlib.Path(manifest_path)
+            if manifest_file.exists():
+                manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        except Exception:
+            manifest = {}
+
+    raw_artifacts = file_metadata.get("artifacts", []) or []
+    artifacts: List[dict] = []
+    for artifact in raw_artifacts:
+        entry = dict(artifact)
+        artifact_id = entry.get("id")
+        if artifact_id:
+            entry["view_url"] = f"/snapshot/{note_id}/artifact/{artifact_id}"
+            mime = entry.get("mime_type") or ""
+            if "html" in mime:
+                entry["inline_url"] = f"/snapshot/{note_id}/artifact/{artifact_id}/inline"
+        artifacts.append(entry)
+
+    context = {
+        "note": note,
+        "manifest": manifest,
+        "file_metadata": file_metadata,
+        "artifacts": artifacts,
+    }
+
+    return render_page(request, "snapshot_view.html", context)
+
+
+@app.get("/snapshot/{note_id}/artifact/{artifact_id}")
+def snapshot_artifact(request: Request, note_id: int, artifact_id: str):
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+
+    conn = get_conn()
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT file_metadata FROM notes WHERE id = ? AND user_id = ?",
+        (note_id, current_user.id),
+    ).fetchone()
+    conn.close()
+
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    try:
+        metadata = json.loads(row[0])
+    except Exception:
+        metadata = {}
+
+    artifacts = metadata.get("artifacts", [])
+    artifact = next((a for a in artifacts if a.get("id") == artifact_id), None)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    path = pathlib.Path(artifact.get("path", ""))
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file missing")
+
+    return FileResponse(
+        str(path),
+        media_type=artifact.get("mime_type") or "application/octet-stream",
+        filename=path.name,
+    )
+
+
+@app.get("/snapshot/{note_id}/artifact/{artifact_id}/inline")
+def snapshot_artifact_inline(request: Request, note_id: int, artifact_id: str):
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+
+    conn = get_conn()
+    c = conn.cursor()
+    row = c.execute(
+        "SELECT file_metadata FROM notes WHERE id = ? AND user_id = ?",
+        (note_id, current_user.id),
+    ).fetchone()
+    conn.close()
+
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    try:
+        metadata = json.loads(row[0])
+    except Exception:
+        metadata = {}
+
+    artifacts = metadata.get("artifacts", [])
+    artifact = next((a for a in artifacts if a.get("id") == artifact_id), None)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    mime_type = (artifact.get("mime_type") or "").lower()
+    if "html" not in mime_type:
+        return RedirectResponse(f"/snapshot/{note_id}/artifact/{artifact_id}")
+
+    path = pathlib.Path(artifact.get("path", ""))
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file missing")
+
+    try:
+        html_content = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Unable to read artifact content")
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    for tag in soup(["script", "style", "iframe", "object", "embed"]):
+        tag.decompose()
+
+    safe_html = soup.prettify()
+    page = f"""<!DOCTYPE html>
+<html lang=\"en\">
+  <head>
+    <meta charset=\"utf-8\" />
+    <title>Snapshot Preview</title>
+    <style>
+      body {{
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        margin: 1.5rem;
+        background-color: #0f172a;
+        color: #e2e8f0;
+      }}
+      a {{ color: #38bdf8; }}
+      img, video {{ max-width: 100%; height: auto; }}
+      pre {{ white-space: pre-wrap; }}
+    </style>
+  </head>
+  <body>
+    {safe_html}
+  </body>
+</html>"""
+
+    return HTMLResponse(content=page)
+
+
+@app.get("/web/jobs")
+def web_ingestion_jobs(request: Request, limit: int = 50):
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+
+    try:
+        limit = max(1, min(int(limit), 200))
+    except Exception:
+        limit = 50
+
+    job_service = WebIngestionService(get_conn)
+    jobs = job_service.list_jobs(current_user.id, limit=limit)
+
+    return render_page(
+        request,
+        "web_jobs.html",
+        {
+            "jobs": jobs,
+            "limit": limit,
+            "user": current_user,
+        },
+    )
+
 
 @app.get("/edit/{note_id}")
 def edit_get(
@@ -2077,7 +2619,26 @@ def delete_note(
     return resp
 
 @app.get("/audio/{filename}")
-def get_audio(filename: str, current_user: User = Depends(get_current_user)):
+@app.head("/audio/{filename}")
+def get_audio(filename: str, request: Request, token: str = None):
+    # Use session-based authentication for audio files (works with HTML audio elements)
+    current_user = get_current_user_silent(request)
+
+    # If no session auth, try token-based auth as fallback for audio streaming
+    if not current_user and token:
+        try:
+            from jose import jwt
+            from services.auth_service import SECRET_KEY, ALGORITHM
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            username: str = payload.get("sub")
+            if username:
+                current_user = auth_service.get_user(username)
+        except:
+            pass
+
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     conn = get_conn()
     c = conn.cursor()
     row = c.execute(
@@ -2087,9 +2648,19 @@ def get_audio(filename: str, current_user: User = Depends(get_current_user)):
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Audio not found")
+
+    # Try playback version first (better quality), fallback to converted version
+    playback_filename = filename.replace('.converted.wav', '.playback.wav')
+    playback_path = settings.audio_dir / playback_filename
+
+    if playback_path.exists():
+        return FileResponse(str(playback_path), media_type="audio/wav")
+
+    # Fallback to original converted version
     audio_path = settings.audio_dir / filename
     if audio_path.exists():
-        return FileResponse(str(audio_path))
+        return FileResponse(str(audio_path), media_type="audio/wav")
+
     raise HTTPException(status_code=404, detail="Audio not found")
 
 @app.get("/files/{filename}")
@@ -2098,7 +2669,7 @@ def get_file(filename: str, request: Request, token: str | None = None):
 
     AuthN strategies:
     - Cookie-based session (preferred, same-origin)
-    - Signed URL token (?token=...) for when cookies are not sent
+    - Optional signed URL token (?token=...) for cross-origin or share links
     """
     import mimetypes
 
@@ -2293,7 +2864,9 @@ async def capture(
                         error_msg = f"File too large ({size} bytes, max {settings.max_file_size})"
                         if "application/json" in request.headers.get("accept", ""):
                             raise HTTPException(status_code=400, detail=error_msg)
-                        return RedirectResponse("/?error=" + error_msg, status_code=302)
+                        resp = RedirectResponse("/dashboard/v3", status_code=302)
+                        set_flash(resp, error_msg, "error")
+                        return resp
                     out.write(chunk)
 
             # Process saved file
@@ -2304,7 +2877,9 @@ async def capture(
                 error_msg = f"File processing failed: {result['error']}"
                 if "application/json" in request.headers.get("accept", ""):
                     raise HTTPException(status_code=400, detail=error_msg)
-                return RedirectResponse("/?error=" + error_msg, status_code=302)
+                resp = RedirectResponse("/dashboard/v3", status_code=302)
+                set_flash(resp, error_msg, "error")
+                return resp
             
             # Update note details based on file processing
             file_info = result['file_info']
@@ -2337,7 +2912,9 @@ async def capture(
             error_msg = f"File upload failed: {str(e)}"
             if "application/json" in request.headers.get("accept", ""):
                 raise HTTPException(status_code=400, detail=error_msg)
-            return RedirectResponse("/?error=" + error_msg, status_code=302)
+            resp = RedirectResponse("/dashboard/v3", status_code=302)
+            set_flash(resp, error_msg, "error")
+            return resp
     
     # Generate title and prepare for database
     title = content[:60] if content else (
@@ -2432,7 +3009,9 @@ async def capture(
             success_msg = f"Note saved successfully"
             if processing_status == "pending":
                 success_msg += " and queued for processing"
-            return RedirectResponse(f"/?success={success_msg}", status_code=302)
+            resp = RedirectResponse("/dashboard/v3", status_code=302)
+            set_flash(resp, success_msg, "success")
+            return resp
             
     except Exception as e:
         conn.rollback()
@@ -2442,17 +3021,31 @@ async def capture(
         error_msg = f"Database error: {str(e)}"
         if "application/json" in request.headers.get("accept", ""):
             raise HTTPException(status_code=500, detail=error_msg)
-        return RedirectResponse("/?error=" + error_msg, status_code=302)
+        resp = RedirectResponse("/dashboard/v3", status_code=302)
+        set_flash(resp, error_msg, "error")
+        return resp
     finally:
         conn.close()
 
 @app.post("/webhook/apple")
 async def webhook_apple(
     data: dict = Body(...),
-    current_user: User = Depends(get_current_user),
+    authorization: str = Header(None)
 ):
-    """Apple Shortcuts webhook handler"""
-    return webhook_service.process_apple_webhook(data, current_user.id)
+    """Apple Shortcuts webhook handler with token authentication"""
+    # Verify webhook token
+    expected_token = settings.webhook_token
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization header format. Use: Bearer <token>")
+
+    token = authorization.split(" ", 1)[1].strip()
+    if token != expected_token:
+        raise HTTPException(status_code=401, detail="Invalid webhook token")
+
+    # Default to user ID 1 for Apple Shortcuts (adjust as needed)
+    user_id = data.get("user_id", 1)
+
+    return webhook_service.process_apple_webhook(data, user_id)
 
 @app.post("/sync/obsidian")
 def sync_obsidian(
@@ -2515,137 +3108,6 @@ async def obsidian_status_api(current_user: User = Depends(get_current_user)):
         "last_sync": get_last_sync(),
     }
 
-# --- Auto-seeding Admin Endpoints ---
-
-@app.get("/api/admin/auto-seeding/status")
-async def get_auto_seeding_status(current_user: User = Depends(get_current_user)):
-    """Get auto-seeding system status and configuration."""
-    try:
-        from services.auto_seeding_service import get_auto_seeding_service
-        from services.initialization_service import get_initialization_service
-        
-        auto_seeding_service = get_auto_seeding_service(get_conn)
-        init_service = get_initialization_service(get_conn)
-        
-        # Get overall system status
-        auto_seeding_status = auto_seeding_service.check_auto_seeding_status()
-        initialization_status = init_service.get_initialization_status()
-        
-        # Get user-specific auto-seeding history
-        user_history = auto_seeding_service.get_auto_seeding_history(current_user.id)
-        
-        # Check if current user should be auto-seeded
-        user_seed_check = auto_seeding_service.should_auto_seed(current_user.id)
-        
-        return {
-            "system_status": auto_seeding_status,
-            "initialization_status": initialization_status,
-            "user_history": user_history,
-            "user_seed_check": user_seed_check,
-            "user_id": current_user.id
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get auto-seeding status: {str(e)}")
-
-@app.post("/api/admin/auto-seeding/trigger")
-async def trigger_auto_seeding(
-    background_tasks: BackgroundTasks,
-    user_id: int = Query(None, description="User ID to seed (defaults to current user)"),
-    force: bool = Query(False, description="Force seeding even if conditions aren't met"),
-    current_user: User = Depends(get_current_user)
-):
-    """Manually trigger auto-seeding for a user."""
-    try:
-        from services.auto_seeding_service import get_auto_seeding_service
-        
-        # Use current user if no user_id specified
-        target_user_id = user_id if user_id is not None else current_user.id
-        
-        auto_seeding_service = get_auto_seeding_service(get_conn)
-        
-        # Perform auto-seeding in background
-        def perform_seeding():
-            try:
-                result = auto_seeding_service.perform_auto_seeding(target_user_id, force=force)
-                print(f"🌱 Manual auto-seeding triggered for user {target_user_id}: {result}")
-                return result
-            except Exception as e:
-                print(f"❌ Manual auto-seeding failed for user {target_user_id}: {e}")
-                raise
-        
-        background_tasks.add_task(perform_seeding)
-        
-        return {
-            "success": True,
-            "message": f"Auto-seeding triggered for user {target_user_id}",
-            "target_user_id": target_user_id,
-            "force": force
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to trigger auto-seeding: {str(e)}")
-
-@app.get("/api/admin/auto-seeding/failed-onboardings")
-async def get_failed_onboardings(
-    limit: int = Query(50, description="Maximum number of failed onboardings to return"),
-    current_user: User = Depends(get_current_user)
-):
-    """Get list of users that had failed onboarding attempts."""
-    try:
-        from services.initialization_service import get_initialization_service
-        
-        init_service = get_initialization_service(get_conn)
-        failed_onboardings = init_service.get_failed_onboardings(limit)
-        
-        return {
-            "failed_onboardings": failed_onboardings,
-            "count": len(failed_onboardings),
-            "limit": limit
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get failed onboardings: {str(e)}")
-
-@app.post("/api/admin/auto-seeding/retry-failed")
-async def retry_failed_onboardings(
-    background_tasks: BackgroundTasks,
-    user_id: int = Query(None, description="Specific user ID to retry (optional)"),
-    current_user: User = Depends(get_current_user)
-):
-    """Retry failed onboarding attempts."""
-    try:
-        from services.initialization_service import get_initialization_service
-        from services.auth_service import _perform_user_auto_seeding
-        
-        init_service = get_initialization_service(get_conn)
-        
-        if user_id:
-            # Retry specific user
-            background_tasks.add_task(_perform_user_auto_seeding, user_id, 0)
-            return {
-                "success": True,
-                "message": f"Retry scheduled for user {user_id}",
-                "retried_users": [user_id]
-            }
-        else:
-            # Retry all failed onboardings
-            failed_onboardings = init_service.get_failed_onboardings(50)
-            retried_users = []
-            
-            for onboarding in failed_onboardings:
-                user_id = onboarding["user_id"]
-                background_tasks.add_task(_perform_user_auto_seeding, user_id, 0)
-                retried_users.append(user_id)
-            
-            return {
-                "success": True,
-                "message": f"Retry scheduled for {len(retried_users)} users",
-                "retried_users": retried_users
-            }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to retry failed onboardings: {str(e)}")
 
 @app.get("/activity")
 def activity_timeline(
@@ -3781,10 +4243,12 @@ async def get_recent_notes(
     try:
         cursor.execute(
             """
-            SELECT id, title, COALESCE(body, content) as content, created_at, type, tags
+            SELECT id, title, COALESCE(body, content) AS content,
+                   COALESCE(timestamp, created_at, updated_at) AS sort_ts,
+                   type, tags
             FROM notes 
             WHERE user_id = ?
-            ORDER BY created_at DESC 
+            ORDER BY sort_ts DESC 
             LIMIT ?
             """,
             (current_user.id, limit)
@@ -3807,6 +4271,122 @@ async def get_recent_notes(
     finally:
         conn.close()
 
+
+@app.get("/api/snapshots")
+async def get_snapshots_list(
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """Get list of notes with snapshot data (clean URL implementation)"""
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT id, title, summary,
+                   COALESCE(timestamp, created_at, updated_at) AS sort_ts,
+                   file_metadata
+            FROM notes
+            WHERE user_id = ? AND file_metadata IS NOT NULL AND file_metadata != ''
+            ORDER BY sort_ts DESC
+            LIMIT ?
+            """,
+            (current_user.id, limit)
+        )
+
+        snapshots = []
+        for row in cursor.fetchall():
+            snapshot_data = {
+                "id": row[0],
+                "title": row[1] or "Untitled Snapshot",
+                "summary": row[2],
+                "created_at": row[3],
+                "file_metadata": row[4]
+            }
+            snapshots.append(snapshot_data)
+
+        return snapshots
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/snapshot/{note_id}")
+async def get_snapshot_data(
+    note_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed snapshot data for a specific note (clean URL implementation)"""
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "SELECT * FROM notes WHERE id = ? AND user_id = ?",
+            (note_id, current_user.id)
+        )
+
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+
+        # Get column names
+        columns = [col[0] for col in cursor.description]
+        note = dict(zip(columns, row))
+
+        # Parse file metadata
+        file_metadata = {}
+        if note.get("file_metadata"):
+            try:
+                file_metadata = json.loads(note["file_metadata"])
+            except Exception:
+                file_metadata = {}
+
+        # Parse manifest if available
+        manifest = {}
+        manifest_path = file_metadata.get("manifest_path")
+        if manifest_path:
+            try:
+                manifest_full_path = pathlib.Path(settings.base_dir) / manifest_path
+                if manifest_full_path.exists():
+                    with open(manifest_full_path, 'r') as f:
+                        manifest = json.load(f)
+            except Exception:
+                manifest = {}
+
+        # Get artifacts
+        artifacts = []
+        artifacts_data = file_metadata.get("artifacts", [])
+        for artifact in artifacts_data:
+            artifact_entry = artifact.copy()
+            # Create view URLs without exposing internal paths
+            if artifact.get("path"):
+                artifact_id = artifact.get("id") or f"artifact_{len(artifacts)}"
+                artifact_entry["view_url"] = f"/snapshot/{note_id}/artifact/{artifact_id}"
+
+                # Check if it's HTML for inline viewing
+                mime_type = artifact.get("mime_type", "")
+                if "html" in mime_type:
+                    artifact_entry["inline_url"] = f"/snapshot/{note_id}/artifact/{artifact_id}/inline"
+
+            artifacts.append(artifact_entry)
+
+        return {
+            "note": note,
+            "manifest": manifest,
+            "file_metadata": file_metadata,
+            "artifacts": artifacts
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
 def verify_webhook_token_local(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
     # Delegate to auth service imported function
     from services.auth_service import verify_webhook_token
@@ -3818,31 +4398,83 @@ def verify_webhook_token_local(credentials: HTTPAuthorizationCredentials = Depen
 
 @app.get("/api/notes")
 async def api_get_notes(
-    limit: int = Query(10, le=100),
+    limit: int = Query(10, le=1000),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user)
 ):
-    """Get recent notes for the current user"""
+    """Get notes for the current user with rich metadata for the Notes view."""
     conn = get_conn()
     c = conn.cursor()
     
     try:
-        rows = c.execute("""
-            SELECT id, title, content, summary, tags, type, status, timestamp, created_at, updated_at
+        # Include optional file + source fields so the Notes view can classify
+        rows = c.execute(
+            """
+            SELECT 
+                id,
+                title,
+                body,
+                content,
+                summary,
+                tags,
+                type,
+                status,
+                timestamp,
+                created_at,
+                updated_at,
+                audio_filename,
+                file_filename,
+                file_type,
+                file_mime_type,
+                source_url
             FROM notes 
             WHERE user_id = ? 
             ORDER BY COALESCE(timestamp, created_at, updated_at) DESC 
             LIMIT ? OFFSET ?
-        """, (current_user.id, limit, offset)).fetchall()
-        
+            """,
+            (current_user.id, limit, offset),
+        ).fetchall()
+
         notes = []
+        col_names = [col[0] for col in c.description]
         for row in rows:
-            note_dict = dict(zip([col[0] for col in c.description], row))
-            # Ensure we have a display date
-            created_at = note_dict.get('created_at') or note_dict.get('timestamp') or note_dict.get('updated_at')
-            note_dict['created_at'] = created_at
-            notes.append(note_dict)
-        
+            note = dict(zip(col_names, row))
+            # Normalize timestamps for frontend
+            note["created_at"] = note.get("created_at") or note.get("timestamp") or note.get("updated_at")
+            # Derive basic file classification if not explicitly set
+            mt = (note.get("file_mime_type") or "").lower()
+            if not note.get("type") and note.get("audio_filename"):
+                note["type"] = "audio"
+            elif not note.get("type") and mt.startswith("image/"):
+                note["type"] = "image"
+
+            # Normalize tags
+            tags_raw = note.get("tags") or ""
+            if isinstance(tags_raw, str):
+                tags_list = [t.strip() for t in tags_raw.replace("#", " ").replace(",", " ").split() if t.strip()]
+            elif isinstance(tags_raw, list):
+                tags_list = [str(t).strip() for t in tags_raw if str(t).strip()]
+            else:
+                tags_list = []
+            note["tags_list"] = tags_list
+
+            # Enrich with preview URL for images/PDFs
+            try:
+                ff = note.get("file_filename")
+                ft = (note.get("file_type") or "").lower()
+                typ = (note.get("type") or "").lower()
+                if ff and (ft == "image" or typ == "image" or mt.startswith("image/") or ft == "document" or mt == "application/pdf"):
+                    note["file_url"] = f"/files/{ff}"
+            except Exception:
+                pass
+
+            # Lightweight metadata
+            try:
+                if (note.get("type") or "").lower() == "audio":
+                    note["audio_duration_hms"] = _audio_duration_from_note(note)
+            except Exception:
+                pass
+            notes.append(note)
         return notes
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch notes: {str(e)}")
@@ -3885,11 +4517,7 @@ async def api_create_note(
         note_id = c.lastrowid
         conn.commit()
         
-        # Queue for AI processing if available
-        if background_tasks:
-            background_tasks.add_task(process_note, note_id)
-        
-        return {
+        note_payload = {
             "id": note_id,
             "title": title,
             "content": content,
@@ -3897,6 +4525,18 @@ async def api_create_note(
             "created_at": now,
             "status": "created"
         }
+
+        # Send notification about note creation
+        await notify_note_created(current_user.id, str(note_id), title)
+
+        # Broadcast realtime update
+        await notify_note_change(current_user.id, "created", note_payload)
+        
+        # Queue for AI processing if available
+        if background_tasks:
+            background_tasks.add_task(process_note, note_id)
+        
+        return note_payload
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create note: {str(e)}")
@@ -3996,7 +4636,23 @@ async def api_get_note(note_id: int, current_user: User = Depends(get_current_us
     
     try:
         row = c.execute("""
-            SELECT id, title, content, body, summary, tags, type, status, timestamp, created_at, updated_at
+            SELECT 
+                id,
+                title,
+                content,
+                body,
+                summary,
+                tags,
+                type,
+                status,
+                timestamp,
+                created_at,
+                updated_at,
+                audio_filename,
+                file_filename,
+                file_type,
+                file_mime_type,
+                actions
             FROM notes 
             WHERE id = ? AND user_id = ?
         """, (note_id, current_user.id)).fetchone()
@@ -4009,6 +4665,17 @@ async def api_get_note(note_id: int, current_user: User = Depends(get_current_us
         created_at = note_dict.get('created_at') or note_dict.get('timestamp') or note_dict.get('updated_at')
         note_dict['created_at'] = created_at
         
+        # Provide audio filename fallback for legacy notes
+        if not note_dict.get('audio_filename') and (note_dict.get('type') or '').lower() == 'audio':
+            original = note_dict.get('file_filename')
+            if original:
+                note_dict['audio_filename'] = original
+        
+        # Expose an explicit audio URL to simplify frontend logic (auth enforced by endpoint)
+        audio_filename = note_dict.get('audio_filename')
+        if audio_filename:
+            note_dict['audio_url'] = f"/audio/{audio_filename}"
+
         return note_dict
     except HTTPException:
         raise
@@ -4054,12 +4721,8 @@ async def api_update_note(
         """, (title, content, content, tags, now, note_id, current_user.id))
         
         conn.commit()
-        
-        # Queue for AI processing if available
-        if background_tasks:
-            background_tasks.add_task(process_note, note_id)
-        
-        return {
+
+        note_response = {
             "id": note_id,
             "title": title,
             "content": content,
@@ -4067,6 +4730,15 @@ async def api_update_note(
             "updated_at": now,
             "status": "updated"
         }
+
+        # Broadcast realtime update
+        await notify_note_change(current_user.id, "updated", note_response)
+
+        # Queue for AI processing if available
+        if background_tasks:
+            background_tasks.add_task(process_note, note_id)
+        
+        return note_response
     except HTTPException:
         raise
     except Exception as e:
@@ -4100,8 +4772,11 @@ async def api_delete_note(note_id: int, current_user: User = Depends(get_current
         """, (now, note_id, current_user.id))
         
         conn.commit()
+
+        payload = {"status": "deleted", "id": note_id}
+        await notify_note_change(current_user.id, "deleted", payload)
         
-        return {"status": "deleted", "id": note_id}
+        return payload
     except HTTPException:
         raise
     except Exception as e:
@@ -4325,38 +5000,25 @@ class ConnectionManager:
         for user_id in list(self.active_connections.keys()):
             await self.send_to_user(user_id, message)
 
-manager = ConnectionManager()
+# Use enhanced WebSocket connection manager
+manager = get_connection_manager()
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int):
-    await manager.connect(websocket, user_id)
+    connection_id = await manager.connect(websocket, user_id)
     try:
         while True:
             # Keep connection alive and handle incoming messages
             data = await websocket.receive_text()
-            try:
-                message = json.loads(data)
-                # Handle different message types
-                if message.get("type") == "ping":
-                    await websocket.send_json({"type": "pong", "timestamp": datetime.now().isoformat()})
-                elif message.get("type") == "typing":
-                    # Could broadcast typing indicators to other users in the future
-                    pass
-            except json.JSONDecodeError:
-                pass
+            await manager.handle_message(connection_id, data)
     except WebSocketDisconnect:
-        manager.disconnect(websocket, user_id)
+        await manager.disconnect(connection_id, user_id)
 
 # Enhanced note creation with real-time updates
-async def notify_note_change(user_id: int, action: str, note_data: dict):
-    """Notify connected clients about note changes"""
-    await manager.send_to_user(user_id, {
-        "type": "note_update",
-        "action": action,  # "created", "updated", "deleted"
-        "note": note_data,
-        "timestamp": datetime.now().isoformat()
-    })
+async def notify_note_change(user_id: int, action: str, note_data: dict) -> None:
+    """Backward-compatible wrapper around realtime broadcast helper."""
+    await notify_note_update(user_id, action, note_data)
 
 # Update existing endpoints to include real-time notifications
 @app.post("/api/notes/realtime")
@@ -4708,6 +5370,74 @@ async def api_semantic_search(
         finally:
             conn.close()
 
+@app.post("/api/search/suggestions")
+async def api_search_suggestions(
+    request_data: dict = Body(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Get search suggestions based on user's notes and search history"""
+    query = request_data.get('query', '').strip()
+    limit = min(request_data.get('limit', 5), 10)  # Max 10 suggestions
+    
+    if not query or len(query) < 2:
+        return {"suggestions": []}
+    
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        suggestions = []
+        
+        # Get suggestions from note titles and tags
+        search_query = f"%{query}%"
+        rows = c.execute("""
+            SELECT DISTINCT title, tags, type 
+            FROM notes 
+            WHERE user_id = ? AND (
+                title LIKE ? OR 
+                tags LIKE ?
+            )
+            ORDER BY COALESCE(timestamp, created_at) DESC 
+            LIMIT ?
+        """, (current_user.id, search_query, search_query, limit * 2)).fetchall()
+        
+        # Process title suggestions
+        for title, tags, note_type in rows:
+            if title and query.lower() in title.lower():
+                suggestions.append({
+                    "type": "title",
+                    "text": title,
+                    "context": note_type or "note"
+                })
+        
+        # Process tag suggestions  
+        for title, tags, note_type in rows:
+            if tags:
+                tag_list = [t.strip() for t in tags.split(',') if t.strip()]
+                for tag in tag_list:
+                    if query.lower() in tag.lower() and len(suggestions) < limit:
+                        suggestions.append({
+                            "type": "tag", 
+                            "text": tag,
+                            "context": "tag"
+                        })
+        
+        # Remove duplicates and limit results
+        seen = set()
+        unique_suggestions = []
+        for suggestion in suggestions:
+            key = (suggestion['type'], suggestion['text'])
+            if key not in seen and len(unique_suggestions) < limit:
+                seen.add(key)
+                unique_suggestions.append(suggestion)
+        
+        return {"suggestions": unique_suggestions}
+        
+    except Exception as e:
+        print(f"Search suggestions error: {e}")
+        return {"suggestions": []}
+    finally:
+        conn.close()
+
 @app.get("/api/user/activity")
 async def api_user_activity(
     days: int = Query(7, ge=1, le=365),
@@ -4816,3 +5546,169 @@ def dashboard_v2(request: Request):
         "request": request,
         "current_user": current_user
     })
+
+@app.get("/dashboard/v3")
+def dashboard_v3(request: Request):
+    """Ultra-modern React-style dashboard with Obsidian/Discord/Notion/Spotify inspired design"""
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+    
+    return templates.TemplateResponse("dashboard_v3.html", {
+        "request": request,
+        "current_user": current_user
+    })
+
+@app.get("/dashboard/legacy")
+def dashboard_legacy(request: Request):
+    """Serve the original/legacy dashboard"""
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+    
+    return render_page(request, "dashboard.html", {
+        "current_user": current_user,
+        "notes": [],
+        "search_query": "",
+        "search_type": "fts"
+    })
+
+# Route to serve the analytics dashboard
+@app.get("/analytics")
+def analytics_dashboard(request: Request):
+    """Serve the advanced analytics dashboard"""
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+    
+    return templates.TemplateResponse("analytics_dashboard.html", {
+        "request": request,
+        "current_user": current_user
+    })
+
+@app.get("/debug/voice")
+async def debug_voice_recording():
+    """Debug page for testing voice recording functionality"""
+    debug_html = """<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Voice Debug</title>
+<style>body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;background:#1a1a1a;color:white}
+.debug-section{background:#2a2a2a;padding:15px;margin:10px 0;border-radius:8px}
+.error{color:#ff6b6b}.success{color:#51cf66}.info{color:#74c0fc}
+button{background:#e03131;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;margin:5px}
+button:hover{background:#c92a2a}#console-output{background:#000;border:1px solid #333;padding:10px;height:300px;overflow-y:auto;font-family:monospace;font-size:12px}</style></head>
+<body><h1>🎤 Voice Recording Debug</h1>
+<div class="debug-section"><h3>System Capabilities</h3><div id="capabilities"></div></div>
+<div class="debug-section"><h3>Recording Test</h3>
+<button onclick="testRecording()">Test Recording (3 sec)</button>
+<button onclick="requestPermission()">Request Permission</button>
+<div id="status"></div></div>
+<div class="debug-section"><h3>Console Output</h3>
+<div id="console-output"></div><button onclick="clearConsole()">Clear</button></div>
+<script>
+const originalLog = console.log, originalError = console.error;
+function addToConsole(message, type = 'log') {
+    const output = document.getElementById('console-output');
+    const timestamp = new Date().toLocaleTimeString();
+    const color = type === 'error' ? '#ff6b6b' : '#51cf66';
+    output.innerHTML += '<div style="color: '+color+'">['+timestamp+'] '+message+'</div>';
+    output.scrollTop = output.scrollHeight;
+}
+console.log = function(...args) { addToConsole(args.join(' '), 'log'); originalLog.apply(console, args); };
+console.error = function(...args) { addToConsole(args.join(' '), 'error'); originalError.apply(console, args); };
+function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
+
+function checkCapabilities() {
+    const caps = document.getElementById('capabilities');
+    let html = '';
+    html += '<div class="'+(navigator.mediaDevices ? 'success' : 'error')+'">MediaDevices: '+(navigator.mediaDevices ? '✓' : '✗')+'</div>';
+    html += '<div class="'+(navigator.mediaDevices?.getUserMedia ? 'success' : 'error')+'">getUserMedia: '+(navigator.mediaDevices?.getUserMedia ? '✓' : '✗')+'</div>';
+    html += '<div class="'+(typeof MediaRecorder !== 'undefined' ? 'success' : 'error')+'">MediaRecorder: '+(typeof MediaRecorder !== 'undefined' ? '✓' : '✗')+'</div>';
+    html += '<div class="'+(window.isSecureContext ? 'success' : 'error')+'">Secure Context: '+(window.isSecureContext ? '✓' : '✗')+'</div>';
+    if (typeof MediaRecorder !== 'undefined') {
+        const formats = ['audio/webm', 'audio/webm;codecs=opus'];
+        formats.forEach(format => {
+            const supported = MediaRecorder.isTypeSupported(format);
+            html += '<div class="'+(supported ? 'success' : 'error')+'">'+format+': '+(supported ? '✓' : '✗')+'</div>';
+        });
+    }
+    caps.innerHTML = html;
+}
+
+let mediaRecorder = null, audioChunks = [];
+
+async function requestPermission() {
+    console.log('🎤 Requesting microphone permission...');
+    document.getElementById('status').innerHTML = '<div class="info">Requesting permission...</div>';
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log('🎤 Permission granted');
+        document.getElementById('status').innerHTML = '<div class="success">Permission granted ✓</div>';
+        stream.getTracks().forEach(track => track.stop());
+        return true;
+    } catch (error) {
+        console.error('🎤 Permission error:', error);
+        document.getElementById('status').innerHTML = '<div class="error">Permission denied: '+error.message+'</div>';
+        return false;
+    }
+}
+
+async function testRecording() {
+    console.log('🎤 Starting recording test...');
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log('🎤 Got microphone stream');
+        
+        let mimeType = 'audio/webm';
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            mimeType = 'audio/webm;codecs=opus';
+        }
+        console.log('🎤 Using:', mimeType);
+        
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        console.log('🎤 MediaRecorder created');
+        
+        audioChunks = [];
+        mediaRecorder.ondataavailable = (event) => {
+            console.log('🎤 Data available:', event.data.size, 'bytes');
+            audioChunks.push(event.data);
+        };
+        
+        mediaRecorder.onstop = () => {
+            console.log('🎤 Recording stopped');
+            const audioBlob = new Blob(audioChunks, { type: mimeType });
+            console.log('🎤 Created blob:', audioBlob.size, 'bytes');
+            
+            const url = URL.createObjectURL(audioBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'test-recording.webm';
+            a.textContent = '⬇️ Download Recording';
+            a.style.display = 'block';
+            document.getElementById('status').appendChild(a);
+            
+            stream.getTracks().forEach(track => track.stop());
+        };
+        
+        mediaRecorder.start();
+        console.log('🎤 Recording started');
+        document.getElementById('status').innerHTML = '<div class="success">🔴 Recording... (3 seconds)</div>';
+        
+        setTimeout(() => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                console.log('🎤 Auto-stopped');
+            }
+        }, 3000);
+        
+    } catch (error) {
+        console.error('🎤 Test failed:', error);
+        document.getElementById('status').innerHTML = '<div class="error">Test failed: '+error.message+'</div>';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🎤 Debug tool loaded');
+    checkCapabilities();
+});
+</script></body></html>"""
+    return Response(content=debug_html, media_type="text/html")

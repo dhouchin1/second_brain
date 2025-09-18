@@ -12,13 +12,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Second Brain is a comprehensive knowledge management system combining multi-modal input capture, AI-powered processing, and intelligent retrieval. It integrates tightly with Obsidian vaults, Discord bots, and Apple Shortcuts for seamless cross-platform note-taking and search.
 
 ## Current Development Status (2025-09-06)
-**Phase:** ✅ **FRONTEND COMPLETE** - Comprehensive Modern Web Application
-**Backend:** Feature Complete MVP with Advanced Capture (58/77 tests passing, 75% success rate)
-**Frontend:** Professional-grade dashboard with 5-phase implementation complete
-**Stability:** Core unified capture system fully tested and stable
-**Next Phase:** Integration testing and deployment preparation
+**Phase:** ⚠️ Frontend still in progress (v3 dashboard + mobile polish outstanding)
+**Backend:** MVP with Advanced Capture (58/77 tests passing, ~75% success)
+**Frontend:** Dashboard v3 + mobile UX still under development
+**Stability:** Unified capture stable, realtime + auto-seeding require validation
+**Next Phase:** Finish hybrid search UI, realtime notes, mobile touch upgrades
 
-## 🎉 **MAJOR MILESTONE: FRONTEND DEVELOPMENT COMPLETE**
+## ⚠️ Frontend Milestone Pending
 
 ### Modern Web Application Stack
 - **Framework**: FastAPI + Jinja2 templates with modern JavaScript
@@ -26,7 +26,7 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 - **Architecture**: Modular component-based frontend with service integration
 - **Features**: 5-phase implementation delivering enterprise-level functionality
 
-### Frontend Development Phases ✅ COMPLETE
+### Frontend Development Phases – status snapshot (Sep 2025)
 
 #### Phase 1: Foundation & Core Features ✅
 - Modern dashboard interface replacing legacy templates
@@ -36,7 +36,7 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 - Toast notification system
 - Form validation and error handling
 
-#### Phase 2: Advanced Note Management ✅ 
+#### Phase 2: Advanced Note Management 🚧 
 - Comprehensive modal-based note editing system
 - Advanced search with real-time results
 - File upload with drag-and-drop support
@@ -47,7 +47,7 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 - Dark mode toggle with persistence
 - Advanced search filters and sorting
 
-#### Phase 3: Real-time Features ✅
+#### Phase 3: Real-time Features 🚧
 - WebSocket integration for live updates
 - Real-time note synchronization
 - Connection status indicators
@@ -56,7 +56,7 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 - Performance monitoring and metrics
 - Background sync and conflict resolution
 
-#### Phase 4: Mobile PWA Excellence ✅
+#### Phase 4: Mobile PWA Excellence 🚧
 - Progressive Web App capabilities
 - Smart installation prompts for all browsers/platforms
 - Mobile bottom navigation (New, Search, Voice, Browse, More)
@@ -66,7 +66,7 @@ Second Brain is a comprehensive knowledge management system combining multi-moda
 - Service Worker integration for offline functionality
 - Mobile menu overlays with slide animations
 
-#### Phase 5: Advanced Integrations & Professional Features ✅
+#### Phase 5: Advanced Integrations & Professional Features 🛑 Not started
 - **Collaborative Editing**: Operational transform support, conflict resolution
 - **AI Assistant**: Floating panel with tag suggestions, summary generation, related notes
 - **Plugin System**: Comprehensive API with hooks, storage, extensibility  

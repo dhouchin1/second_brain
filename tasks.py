@@ -2,6 +2,7 @@ import sqlite3
 import time
 from datetime import datetime
 from typing import Optional
+import asyncio
 
 from llm_utils import ollama_summarize, ollama_generate_title
 from config import settings
@@ -13,6 +14,68 @@ try:
     _REALTIME = True
 except Exception:
     _REALTIME = False
+
+# Import notification functions
+try:
+    from services.notification_service import (
+        notify_processing_started, 
+        notify_processing_completed, 
+        notify_processing_failed,
+        notify_note_created
+    )
+    from services.websocket_manager import get_connection_manager
+    _NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    _NOTIFICATIONS_AVAILABLE = False
+
+def _send_notification_sync(coro):
+    """Helper to run async notification functions in sync context"""
+    if not _NOTIFICATIONS_AVAILABLE:
+        return
+    try:
+        # Try to get existing event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is already running, create a task
+            asyncio.create_task(coro)
+        else:
+            # If no loop is running, run the coroutine
+            loop.run_until_complete(coro)
+    except RuntimeError:
+        # No event loop, create new one
+        try:
+            asyncio.run(coro)
+        except Exception as e:
+            print(f"Failed to send notification: {e}")
+
+def _send_websocket_notification_sync(user_id: int, notification_data: dict):
+    """Helper to send WebSocket notification synchronously"""
+    if not _NOTIFICATIONS_AVAILABLE:
+        return
+    try:
+        manager = get_connection_manager()
+        
+        async def send_notification():
+            await manager.send_to_user(user_id, {
+                'type': 'notification',
+                'notification': notification_data,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        _send_notification_sync(send_notification())
+    except Exception as e:
+        print(f"Failed to send WebSocket notification: {e}")
+
+def _get_user_id_for_note(note_id: int) -> Optional[int]:
+    """Get user_id for a note from the database"""
+    try:
+        conn = get_conn()
+        cursor = conn.execute("SELECT user_id FROM notes WHERE id = ?", (note_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception:
+        return None
 
 
 def get_conn():
@@ -33,6 +96,16 @@ def process_note(note_id: int):
     actions = note.get("actions", "")
     note_type = note.get("type", "note")
     audio_filename: Optional[str] = note.get("audio_filename")
+    user_id = _get_user_id_for_note(note_id)
+
+    # Send processing started notification
+    if user_id:
+        task_type = "audio transcription" if note_type == "audio" else "note processing"
+        _send_notification_sync(notify_processing_started(
+            user_id=user_id,
+            task_type=task_type,
+            task_id=str(note_id)
+        ))
 
     if note_type == "audio" and audio_filename:
         audio_path = settings.audio_dir / audio_filename
@@ -91,14 +164,30 @@ def process_note(note_id: int):
         (title, content, summary, tags, actions, now, audio_filename, note_id),
     )
     c.execute(
-        "INSERT INTO notes_fts(rowid, title, summary, tags, actions, content) VALUES (?, ?, ?, ?, ?, ?)",
-        (note_id, title, summary, tags, actions, content),
+        "INSERT INTO notes_fts(rowid, title, body, tags) VALUES (?, ?, ?, ?)",
+        (note_id, title, content, tags),
     )
     conn.commit()
     conn.close()
     
     # Mark as completed in FIFO queue
     audio_queue.mark_completed(note_id, success=True)
+
+    # Send processing completed notification
+    if user_id:
+        task_type = "audio transcription" if note_type == "audio" else "note processing"
+        result_data = {
+            "title": title,
+            "content_length": len(content),
+            "tags_count": len([t for t in tags.split(",") if t.strip()]),
+            "summary": summary[:100] + "..." if len(summary) > 100 else summary
+        }
+        _send_notification_sync(notify_processing_completed(
+            user_id=user_id,
+            task_type=task_type,
+            task_id=str(note_id),
+            result_data=result_data
+        ))
 
     # Update Obsidian export with finalized content
     try:
@@ -126,9 +215,45 @@ def run_worker(poll_interval: int = 5):
                     print(f"Error processing note {note_id}: {e}")
                     # Mark as failed in queue
                     audio_queue.mark_completed(note_id, success=False)
+                    
+                    # Send processing failed notification
+                    if user_id:
+                        _send_notification_sync(notify_processing_failed(
+                            user_id=user_id,
+                            task_type="note processing",
+                            task_id=str(note_id),
+                            error=str(e)
+                        ))
             else:
                 # No items in queue, sleep
                 time.sleep(poll_interval)
+
+
+def process_audio_queue():
+    """Process a single queued audio note if available.
+
+    This function is intentionally lightweight so it can be scheduled via
+    FastAPI BackgroundTasks. It fetches the next item from the FIFO queue
+    and processes it using the existing `process_note` function.
+    """
+    next_item = audio_queue.get_next_for_processing()
+    if not next_item:
+        return
+    note_id, user_id = next_item
+    try:
+        process_note(note_id)
+    except Exception as e:
+        # Ensure we don't leave the item stuck in 'processing'
+        audio_queue.mark_completed(note_id, success=False)
+        
+        # Send processing failed notification
+        if user_id:
+            _send_notification_sync(notify_processing_failed(
+                user_id=user_id,
+                task_type="note processing",
+                task_id=str(note_id),
+                error=str(e)
+            ))
 
 
 def process_batch():

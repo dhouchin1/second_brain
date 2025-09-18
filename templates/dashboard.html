@@ -5,21 +5,21 @@
   <link rel="stylesheet" href="/static/css/components.css">
   <link rel="stylesheet" href="/static/css/dashboard-enhanced.css">
   <style>
-    body { background: #0f172a; font-family: 'Inter', Arial, sans-serif; }
-    ::-webkit-scrollbar { width: 8px; background: #0b1220; }
-    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 6px; }
+    body { background: #f8fafc; font-family: 'Inter', Arial, sans-serif; color: #334155; }
+    ::-webkit-scrollbar { width: 8px; background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
     .card-surface { 
-      background: rgba(255,255,255,.04); 
-      border: 1px solid rgba(255,255,255,.08); 
+      background: rgba(248,250,252,.8); 
+      border: 1px solid rgba(203,213,225,.2); 
       transition: all 300ms ease-in-out;
       animation: fadeInUp 0.6s ease-out;
     }
     
     .card-surface:hover {
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.9);
+      border: 1px solid rgba(203,213,225,.3);
       transform: translateY(-1px);
-      box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+      box-shadow: 0 8px 25px rgba(0,0,0,0.08);
     }
     
     @keyframes fadeInUp {
@@ -38,8 +38,8 @@
     .form-element-2 { animation: fadeInUp 0.6s ease-out 0.2s both; }
     .form-element-3 { animation: fadeInUp 0.6s ease-out 0.3s both; }
     .form-element-4 { animation: fadeInUp 0.6s ease-out 0.4s both; }
-    .muted { color: #a5b4fc; opacity: .8; }
-    .pill { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }
+    .muted { color: #64748b; opacity: .8; }
+    .pill { background: rgba(248,250,252,.6); border: 1px solid rgba(203,213,225,.2); }
     
     /* Additional footer centering to ensure perfect alignment */
     .footer {
@@ -84,7 +84,7 @@
     .btn-base:focus {
       outline: 2px solid transparent;
       outline-offset: 2px;
-      box-shadow: 0 0 0 2px rgb(15 23 42), 0 0 0 4px rgb(99 102 241);
+      box-shadow: 0 0 0 2px rgb(248 250 252), 0 0 0 4px rgb(59 130 246);
     }
     
     /* Size variants */
@@ -271,19 +271,36 @@
     <!-- Page title for accessibility - brand is in global header -->
     <h1 class="sr-only">Dashboard</h1>
     
-    <!-- Integrated Obsidian sync in header -->
-    <div class="flex items-center gap-3 text-xs text-slate-400">
-      <span>Obsidian</span>
-      <span id="syncStatus">{% if last_sync %}Last: {{ last_sync }}{% else %}Never synced{% endif %}</span>
-      <button id="syncBtn" class="btn-base btn-secondary btn-sm">Sync</button>
-      <!-- Three-dot menu wrapped to position dropdown relative to the trigger -->
-      <span class="relative inline-block">
-        <button id="syncMore" title="More options" class="btn-base btn-ghost btn-sm">⋯</button>
-        <div id="syncMenu" class="hidden absolute right-0 top-full mt-2 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-slate-100 w-48">
-          <button data-dir="from_obsidian" class="btn-base btn-ghost btn-sm btn-full text-left">Sync from Obsidian</button>
-          <button data-dir="bidirectional" class="btn-base btn-ghost btn-sm btn-full text-left">Bidirectional sync</button>
+    <div class="flex items-center justify-between w-full">
+      <!-- Left side: Obsidian sync info -->
+      <div class="flex items-center gap-3 text-xs text-slate-400">
+        <span>Obsidian</span>
+        <span id="syncStatus">{% if last_sync %}Last: {{ last_sync }}{% else %}Never synced{% endif %}</span>
+      </div>
+      
+      <!-- Right side: Controls -->
+      <div class="flex items-center gap-3">
+        <!-- Dashboard Version Toggle -->
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500">Legacy Dashboard</span>
+          <a href="/dashboard/v3" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-md transition-colors font-medium">
+            Switch to New Dashboard
+          </a>
         </div>
-      </span>
+        
+        <!-- Sync controls -->
+        <div class="flex items-center gap-2">
+          <button id="syncBtn" class="btn-base btn-secondary btn-sm">Sync</button>
+          <!-- Three-dot menu wrapped to position dropdown relative to the trigger -->
+          <span class="relative inline-block">
+            <button id="syncMore" title="More options" class="btn-base btn-ghost btn-sm">⋯</button>
+            <div id="syncMenu" class="hidden absolute right-0 top-full mt-2 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-slate-100 w-48">
+              <button data-dir="from_obsidian" class="btn-base btn-ghost btn-sm btn-full text-left">Sync from Obsidian</button>
+              <button data-dir="bidirectional" class="btn-base btn-ghost btn-sm btn-full text-left">Bidirectional sync</button>
+            </div>
+          </span>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -299,13 +316,13 @@
           id="unifiedSearchInput"
           placeholder="Search notes or create new content..." 
           value="{{ q or '' }}" 
-          class="flex-1 w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-3 pr-32 focus:ring-2 focus:ring-indigo-400 focus:outline-none placeholder:text-slate-400 text-base"
+          class="flex-1 w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-3 pr-32 focus:ring-2 focus:ring-blue-400 focus:outline-none placeholder:text-slate-400 text-base"
           autocomplete="off"
         />
         
         <!-- Search Mode Toggle -->
         <div class="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
-          <select id="searchModeSelect" class="bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded px-2 py-1 focus:ring-1 focus:ring-indigo-400">
+          <select id="searchModeSelect" class="bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded px-2 py-1 focus:ring-1 focus:ring-blue-400">
             <option value="hybrid">🔍 Smart</option>
             <option value="semantic">🧠 AI</option>
             <option value="keyword">📝 Text</option>
@@ -314,7 +331,7 @@
           <button 
             type="button" 
             id="unifiedSearchBtn"
-            class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3 py-1 rounded text-sm transition flex items-center gap-1"
+            class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1 rounded text-sm transition flex items-center gap-1"
           >
             <span class="hidden sm:inline">Search</span>
             <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
@@ -325,7 +342,7 @@
         
         <!-- Loading indicator -->
         <div id="searchLoadingIndicator" class="absolute right-36 top-1/2 transform -translate-y-1/2 hidden">
-          <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-400"></div>
+          <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>
         </div>
       </div>
       
@@ -363,7 +380,7 @@
       {% if q %}
         <div class="mt-2 flex items-center gap-2 text-sm">
           <span class="text-pink-300">Searching: "{{ q }}"</span>
-          <a href="/" class="text-indigo-300 underline hover:text-indigo-200">Clear</a>
+          <a href="/" class="text-blue-400 underline hover:text-blue-300">Clear</a>
         </div>
       {% endif %}
       {% if tag %}
@@ -396,11 +413,11 @@
             <div class="flex flex-col lg:flex-row gap-4 form-element-1 lg:items-stretch">
               <div class="flex-1 lg:flex-[3] flex flex-col">
                 <label for="note" class="text-slate-300 text-sm font-semibold mb-3 block">Quick Note</label>
-                <textarea name="note" id="note" rows="8" placeholder="Write a quick thought, paste content, or use Smart Templates to structure your ideas…" class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-3 text-base placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none transition-all duration-300 resize-y min-h-[200px] max-h-[500px] leading-relaxed flex-1"></textarea>
+                <textarea name="note" id="note" rows="8" placeholder="Write a quick thought, paste content, or use Smart Templates to structure your ideas…" class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-3 text-base placeholder:text-slate-400 focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all duration-300 resize-y min-h-[200px] max-h-[500px] leading-relaxed flex-1"></textarea>
               </div>
               <div class="flex-1 lg:flex-[1] flex flex-col">
                 <label for="tags" class="text-slate-300 text-sm font-semibold mb-3 block">Tags & Categories</label>
-                <textarea name="tags" id="tags" rows="8" placeholder="Add tags separated by commas:&#10;&#10;work, project, meeting&#10;personal, ideas, notes&#10;urgent, draft, review" class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-3 text-base placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none transition-all duration-300 resize-y min-h-[200px] max-h-[500px] leading-relaxed flex-1"></textarea>
+                <textarea name="tags" id="tags" rows="8" placeholder="Add tags separated by commas:&#10;&#10;work, project, meeting&#10;personal, ideas, notes&#10;urgent, draft, review" class="w-full rounded-lg border border-slate-700 bg-slate-800 text-slate-100 px-4 py-3 text-base placeholder:text-slate-400 focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all duration-300 resize-y min-h-[200px] max-h-[500px] leading-relaxed flex-1"></textarea>
               </div>
             </div>
             
@@ -429,7 +446,7 @@
                   </svg>
                   <div class="flex flex-col items-start">
                     <span class="font-medium">Smart Templates</span>
-                    <span class="text-purple-200 text-xs opacity-80">AI-powered structures</span>
+                    <span class="text-blue-200 text-xs opacity-80">AI-powered structures</span>
                   </div>
                 </button>
 
@@ -519,7 +536,7 @@
               <h3 class="text-sm font-semibold text-slate-200">Recent Notes</h3>
               <span id="queueIndicator" class="hidden text-[11px] px-2 py-0.5 rounded-full border border-slate-600 text-slate-300">Queue: 0</span>
             </div>
-            <a href="/search" class="text-xs text-indigo-300 hover:underline">View all</a>
+            <a href="/search" class="text-xs text-blue-400 hover:underline">View all</a>
           </div>
           
           <!-- Transcription Status Widget -->
@@ -604,7 +621,7 @@
                   <a href="/detail/{{ n.id }}" class="text-base text-slate-100 truncate hover:underline">{{ n.title or '(untitled)' }}</a>
                   <div class="flex items-center gap-2">
                     {% if n.type != 'audio' %}
-                    <button class="text-sm text-indigo-300 hover:underline recent-edit" data-id="{{ n.id }}" data-title="{{ n.title or '' }}" data-tags="{{ n.tags or '' }}">Edit</button>
+                    <button class="text-sm text-blue-400 hover:underline recent-edit" data-id="{{ n.id }}" data-title="{{ n.title or '' }}" data-tags="{{ n.tags or '' }}">Edit</button>
                     {% endif %}
                     <button class="text-sm recent-pin" title="Pin" data-id="{{ n.id }}" data-tags="{{ n.tags or '' }}">
                       {% if n.tags and 'pinned' in n.tags %}★{% else %}☆{% endif %}
@@ -636,7 +653,7 @@
                   {% endif %}
                   {% if n.status != 'complete' %}
                   <span>• processing…</span>
-                  <button type="button" class="recent-viewlog text-indigo-300 hover:underline" data-id="{{ n.id }}">View log</button>
+                  <button type="button" class="recent-viewlog text-blue-400 hover:underline" data-id="{{ n.id }}">View log</button>
                   {% endif %}
                 </div>
                 <!-- Enhanced Inline editor -->
@@ -764,7 +781,7 @@
                     <circle cx="12" cy="12" r="10"></circle>
                   </svg>
                   <span>Processing...</span>
-                  <button type="button" class="timeline-viewlog text-indigo-300 hover:underline" data-id="{{ note['id'] }}" onclick="event.stopPropagation();">View log</button>
+                  <button type="button" class="timeline-viewlog text-blue-400 hover:underline" data-id="{{ note['id'] }}" onclick="event.stopPropagation();">View log</button>
                 </div>
               {% else %}
                 <div class="text-xs text-slate-300 line-clamp-3">
@@ -819,10 +836,6 @@
   </footer>
 
   <!-- Enhanced Audio Recorder Script -->
-  <script>
-    // Signed token for SSE authentication (no headers required)
-    window.SSE_TOKEN = '{{ sse_token }}';
-  </script>
   <script>
     // Enhanced Recording System
     class AudioRecorder {
@@ -1510,9 +1523,8 @@
         if (openStreams[id]) return; // already open
 
         let attempts = 0;
-        async function connect(){
-          const tok = (window.SSE_TOKEN && typeof window.SSE_TOKEN === 'string') ? ('?token=' + encodeURIComponent(window.SSE_TOKEN)) : '';
-          const es = new EventSource('/api/status/stream/' + id + tok);
+        function connect(){
+          const es = new EventSource(`/api/status/stream/${id}`, { withCredentials: true });
           openStreams[id] = es;
           es.onmessage = (evt)=>{
             try {
@@ -1529,18 +1541,15 @@
               }
             } catch (e) {}
           };
-          es.onerror = async ()=>{
+          es.onerror = ()=>{
             try { es.close(); } catch{}
+            delete openStreams[id];
             attempts += 1;
             const delay = attempts === 1 ? 1000 : attempts === 2 ? 2000 : attempts === 3 ? 5000 : 10000;
-            // Try to refresh SSE token before reconnecting
-            try {
-              const r = await fetch('/api/sse-token', { credentials: 'same-origin' });
-              if (r.ok) {
-                const d = await r.json();
-                if (d && d.token) window.SSE_TOKEN = d.token;
-              }
-            } catch {}
+            if (attempts >= 5) {
+              appendMessage(id, 'Connection lost. Please refresh to continue monitoring.');
+              return;
+            }
             setTimeout(()=>{
               if (document.getElementById('recent-log-' + id)) connect();
             }, delay);
@@ -1795,7 +1804,7 @@
         if (queueResponse.status === 401) {
           const statusContainer = document.getElementById('queueStatus');
           if (statusContainer) {
-            statusContainer.innerHTML = '<div class="text-xs text-slate-400"><a href="/login" class="text-indigo-300 hover:underline">Login</a> to see queue status</div>';
+            statusContainer.innerHTML = '<div class="text-xs text-slate-400"><a href="/login" class="text-blue-400 hover:underline">Login</a> to see queue status</div>';
           }
           // Stop the polling interval to prevent 401 spam
           if (window.transcriptionStatusInterval) {
@@ -1906,7 +1915,7 @@
         const el = document.getElementById('diagnosticsStatus');
         if (!el) return;
         if (res.status === 401) {
-          el.innerHTML = '<div class="text-slate-400"><a href="/login" class="text-indigo-300 hover:underline">Login</a> to view diagnostics</div>';
+          el.innerHTML = '<div class="text-slate-400"><a href="/login" class="text-blue-400 hover:underline">Login</a> to view diagnostics</div>';
           return;
         }
         if (!res.ok) {
@@ -2405,7 +2414,7 @@
               <span class="text-purple-400">🔧</span>
               <span class="text-purple-300 font-medium">Template Variables</span>
             </div>
-            <p class="text-purple-200 text-sm">Configure how variables should behave and provide default values.</p>
+            <p class="text-blue-200 text-sm">Configure how variables should behave and provide default values.</p>
           </div>
 
           ${variables.length > 0 ? `
@@ -3671,7 +3680,7 @@ An AI-powered tool that provides instant, intelligent code reviews with context-
             <div class="text-4xl mb-4">🔍</div>
             <h4 class="text-slate-300 font-medium mb-2">No results found</h4>
             <p class="text-slate-400 text-sm mb-4">Try adjusting your search terms or creating new content</p>
-            <button class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded text-sm" 
+            <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm" 
                     onclick="document.getElementById('note').focus()">
               Create New Note
             </button>
