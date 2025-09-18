@@ -130,8 +130,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         
         return response
-
-
 # ---- FastAPI Setup with Lifespan ----
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -587,10 +585,9 @@ from services.apple_shortcuts_router import router as shortcuts_router, init_app
 init_apple_shortcuts_router(get_conn, get_current_user)
 app.include_router(shortcuts_router)
 
-# --- Include Smart Templates Router ---
-from services.smart_templates_router import router as templates_router, init_smart_templates_router
-init_smart_templates_router(get_conn, get_current_user)
-app.include_router(templates_router)
+# --- Smart Templates Router archived ---
+# init_smart_templates_router(get_conn, get_current_user)
+# app.include_router(templates_router)
 
 # --- Include Bulk Operations Router ---
 from services.bulk_operations_router import router as bulk_router, init_bulk_operations_router
@@ -623,11 +620,6 @@ init_diagnostics_router(get_conn, get_current_user)
 app.include_router(diagnostics_router)
 
 # --- Include Search Benchmarking Router ---
-from services.search_benchmarking_router import router as benchmarking_router, init_search_benchmarking_router
-init_search_benchmarking_router(get_conn)
-app.include_router(benchmarking_router)
-
-
 # ---- Advanced Capture Router ----
 from services.advanced_capture_router import router as advanced_capture_router, init_advanced_capture_router
 init_advanced_capture_router(get_conn)
@@ -653,13 +645,6 @@ init_notification_router(get_current_user)
 app.include_router(notification_router)
 
 # ---- Demo Data Router ----
-try:
-    from services.demo_data_router import router as demo_data_router
-    app.include_router(demo_data_router)
-except ImportError:
-    print("Demo data router not available")
-
-
 
 # --- Simple FIFO job worker for note processing ---
 import asyncio
@@ -779,8 +764,6 @@ async def _start_audio_worker():
     queue_stats = audio_queue.get_queue_status()
     queued_count = queue_stats.get('status_counts', {}).get('queued', 0)
     print(f"📊 Found {queued_count} items in audio processing queue")
-
-
 # Add real-time status endpoints if available
 if REALTIME_AVAILABLE:
     create_status_endpoint(app)
@@ -822,19 +805,13 @@ async def search_page(request: Request):
     if not user:
         return RedirectResponse("/login", status_code=302)
     return render_page(request, "search.html", {"user": user})
-
-
 # Auth endpoints moved to services/auth_service.py
-
-
 # All auth endpoints moved to services/auth_service.py
 
 @app.get("/saas")
 def saas_landing_page(request: Request):
     """Modern SaaS landing page for marketing and showcase"""
     return render_page(request, "landing_saas.html", {})
-
-
 @app.get("/landing-saas")
 def saas_landing_page_alt(request: Request):
     """Alternative URL for the modern SaaS landing page"""
@@ -1478,8 +1455,6 @@ async def api_sse_token(request: Request):
             "Access-Control-Allow-Credentials": "true",
         })
     return JSONResponse({"token": token}, headers=headers)
-
-
 @app.get("/api/audio-queue/status")
 async def get_audio_queue_status(current_user: User = Depends(get_current_user)):
     """Get current audio processing queue status for the user"""
@@ -1519,8 +1494,6 @@ async def get_audio_queue_status(current_user: User = Depends(get_current_user))
         "queue_status": status,
         "recent_audio": recent_audio
     }
-
-
 @app.get("/api/transcribe/status")
 async def transcribe_status(current_user: User = Depends(get_current_user)):
     """Report basic transcription queue status and settings."""
@@ -1548,14 +1521,10 @@ async def transcribe_status(current_user: User = Depends(get_current_user)):
             "transcription_segment_seconds": getattr(settings, 'transcription_segment_seconds', 600),
         },
     }
-
-
 @app.get("/api/batch/status")
 async def get_batch_status(current_user: User = Depends(get_current_user)):
     """Get batch processing status and configuration"""
     return audio_queue.get_batch_status()
-
-
 # Public health check endpoints (no authentication required)
 @app.get("/api/audio-queue/health")
 async def audio_queue_health():
@@ -1619,8 +1588,6 @@ async def process_batch_now(current_user: User = Depends(get_current_user)):
         return {"message": "Batch processing initiated", "success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error starting batch processing: {str(e)}")
-
-
 @app.post("/api/transcribe/requeue")
 async def transcribe_requeue(
     background_tasks: BackgroundTasks,
@@ -1654,8 +1621,6 @@ async def transcribe_requeue(
             background_tasks.add_task(process_note, nid)
             count += 1
     return {"success": True, "requeued": count}
-
-
 @app.post("/webhook/audio")
 async def webhook_audio_upload(
     background_tasks: BackgroundTasks,
@@ -1668,8 +1633,6 @@ async def webhook_audio_upload(
     Quickly saves audio and queues for background processing without blocking.
     """
     return await webhook_service.process_audio_webhook(background_tasks, file, tags, user_id)
-
-
     fields = {k: v for k, v in data.items() if k in {"title", "tags", "content"}}
     if not fields:
         return {"success": False, "message": "No valid fields"}
@@ -1710,8 +1673,6 @@ async def webhook_audio_upload(
     return {"success": True, "note": {"id": note_id, **fields}}
 
 # Enhanced Search Endpoint - MOVED to services/search_router.py
-
-
 # New data models
 # Removed duplicate DiscordWebhook class - using definition from line ~232
 
@@ -1754,17 +1715,9 @@ async def create_calendar_event(
     return webhook_service.process_apple_calendar_webhook(webhook_data, current_user.id)
 
 # Enhanced Search - MOVED to services/search_router.py
-
-
 # Hybrid Search - MOVED to services/search_router.py
-
-
 # Search Suggestions - MOVED to services/search_router.py
-
-
 # Helper functions _fuzzy_match and _extract_phrases - MOVED to services/search_router.py
-
-
 # Search Enhancement Endpoint - MOVED to services/search_router.py
 @app.get("/api/analytics")
 async def get_analytics(current_user: User = Depends(get_current_user)):
@@ -2202,8 +2155,6 @@ async def webhook_discord_legacy1(
     from services.webhook_service import DiscordWebhook
     webhook_data = DiscordWebhook(**data)
     return await webhook_service.process_discord_webhook_legacy(webhook_data, background_tasks)
-
-
 # Discord Integration
 @app.post("/webhook/discord/legacy2", include_in_schema=False)
 async def webhook_discord_legacy2(
@@ -2247,8 +2198,6 @@ async def webhook_discord_legacy2(
     conn.close()
     
     return {"status": "ok", "note_id": note_id}
-
-
 # /webhook/discord/upload uses the form field discord_user_id mapping flow
 @app.post("/webhook/discord/upload")
 async def webhook_discord_upload(
@@ -2329,8 +2278,6 @@ def detail(
         "detail.html",
         {"note": note, "related": related, "user": current_user, "file_url": file_url},
     )
-
-
 @app.get("/snapshot/{note_id}")
 def snapshot_view(request: Request, note_id: int):
     current_user = get_current_user_silent(request)
@@ -2388,8 +2335,6 @@ def snapshot_view(request: Request, note_id: int):
     }
 
     return render_page(request, "snapshot_view.html", context)
-
-
 @app.get("/snapshot/{note_id}/artifact/{artifact_id}")
 def snapshot_artifact(request: Request, note_id: int, artifact_id: str):
     current_user = get_current_user_silent(request)
@@ -2426,8 +2371,6 @@ def snapshot_artifact(request: Request, note_id: int, artifact_id: str):
         media_type=artifact.get("mime_type") or "application/octet-stream",
         filename=path.name,
     )
-
-
 @app.get("/snapshot/{note_id}/artifact/{artifact_id}/inline")
 def snapshot_artifact_inline(request: Request, note_id: int, artifact_id: str):
     current_user = get_current_user_silent(request)
@@ -2496,8 +2439,6 @@ def snapshot_artifact_inline(request: Request, note_id: int, artifact_id: str):
 </html>"""
 
     return HTMLResponse(content=page)
-
-
 @app.get("/web/jobs")
 def web_ingestion_jobs(request: Request, limit: int = 50):
     current_user = get_current_user_silent(request)
@@ -2521,8 +2462,6 @@ def web_ingestion_jobs(request: Request, limit: int = 50):
             "user": current_user,
         },
     )
-
-
 @app.get("/edit/{note_id}")
 def edit_get(
     request: Request,
@@ -3107,8 +3046,6 @@ async def obsidian_status_api(current_user: User = Depends(get_current_user)):
         "database_notes": db_notes,
         "last_sync": get_last_sync(),
     }
-
-
 @app.get("/activity")
 def activity_timeline(
     request: Request,
@@ -3167,8 +3104,6 @@ def note_status(note_id: int, current_user: User = Depends(get_current_user)):
 
 # Enhanced Analytics endpoint
 # Removed duplicate analytics endpoint - kept first implementation at line ~2784
-
-
 # Removed deprecated legacy search endpoint - functionality consolidated in main search service
 
 @app.post("/webhook/discord/upload")
@@ -4270,8 +4205,6 @@ async def get_recent_notes(
         return {"error": str(e)}
     finally:
         conn.close()
-
-
 @app.get("/api/snapshots")
 async def get_snapshots_list(
     limit: int = Query(50, ge=1, le=100),
@@ -4311,8 +4244,6 @@ async def get_snapshots_list(
         return {"error": str(e)}
     finally:
         conn.close()
-
-
 @app.get("/api/snapshot/{note_id}")
 async def get_snapshot_data(
     note_id: int,
