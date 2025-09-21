@@ -15,6 +15,7 @@ from fastapi import HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 
 from services.auth_service import User
+from services.ingestion_queue import ingestion_queue, IngestionJobType
 from config import settings
 from file_processor import FileProcessor
 from obsidian_sync import ObsidianSync
@@ -181,6 +182,7 @@ class UploadService:
         note_type = file_info['category']
         stored_filename = result['stored_filename']
         extracted_text = result.get('extracted_text', "")
+        content_hash = result.get('content_hash')
         file_metadata = {
             'original_filename': file_info['original_filename'],
             'mime_type': file_info['mime_type'],
@@ -188,6 +190,8 @@ class UploadService:
             'processing_type': result['processing_type'],
             'metadata': result.get('metadata'),
         }
+        if content_hash:
+            file_metadata['content_hash'] = content_hash
         processing_status = "pending" if note_type == 'audio' else "complete"
         content = (note or "").strip()
         if processing_status == "complete" and not content and extracted_text:
@@ -205,8 +209,9 @@ class UploadService:
                 INSERT INTO notes (
                     title, body, content, summary, tags, actions, type, timestamp,
                     audio_filename, file_filename, file_type, file_mime_type,
-                    file_size, extracted_text, file_metadata, status, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    file_size, extracted_text, file_metadata, status, user_id,
+                    content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     title,
@@ -226,6 +231,7 @@ class UploadService:
                     json.dumps(file_metadata, default=str) if file_metadata else None,
                     processing_status,
                     current_user.id,
+                    content_hash,
                 ),
             )
             note_id = c.lastrowid
@@ -244,20 +250,40 @@ class UploadService:
         except Exception:
             pass
 
-        # Queue background processing for audio using FIFO queue
+        # Queue background processing for audio using ingestion job queue
         if processing_status == "pending":
-            # Add to FIFO queue for ordered processing
+            job = ingestion_queue.enqueue(
+                IngestionJobType.AUDIO_TRANSCRIPTION,
+                note_id=note_id,
+                user_id=current_user.id,
+                payload={
+                    "stored_filename": stored_filename,
+                    "original_filename": file_info['original_filename'],
+                },
+                priority=1,
+                content_hash=content_hash,
+            )
+
             self.audio_queue.add_to_queue(note_id, current_user.id)
-            
-            # Start queue worker as background task
-            from tasks import process_audio_queue
-            background_tasks.add_task(process_audio_queue)
+
+            from tasks import process_ingestion_queue
+            background_tasks.add_task(process_ingestion_queue)
             return {
                 "success": True,
                 "id": note_id,
                 "status": processing_status,
                 "file_type": note_type,
                 "message": "Upload finalized and queued for processing",
+                "ingestion_job": job.to_api(),
             }
 
-        return {"success": True, "id": note_id, "status": processing_status, "file_type": note_type, "message": "Upload finalized"}
+        response = {
+            "success": True,
+            "id": note_id,
+            "status": processing_status,
+            "file_type": note_type,
+            "message": "Upload finalized",
+        }
+        if content_hash:
+            response["content_hash"] = content_hash
+        return response

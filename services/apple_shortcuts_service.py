@@ -183,7 +183,7 @@ class AppleShortcutsService:
             
             if request.audio_file and request.use_whisper:
                 # Save audio file and queue for Whisper.cpp processing
-                audio_result = await self._process_audio_file(request.audio_file, user_id)
+                audio_result = self._process_audio_file(request.audio_file, user_id)
                 if audio_result:
                     transcription_source = "whisper_cpp"
                     processing_status = "processing"  # Will be updated when Whisper completes
@@ -194,6 +194,7 @@ class AppleShortcutsService:
             
             # Create note with voice metadata
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
             c.execute("""
                 INSERT INTO notes (
                     title, body, content, tags, type, timestamp, status, user_id,
@@ -223,18 +224,20 @@ class AppleShortcutsService:
             
             note_id = c.lastrowid
             
-            # Add to FTS (will be updated when transcription completes)
-            c.execute("""
-                -- FTS triggers keep index in sync
-            """, (note_id, title, "", request.tags or "", "", final_content, final_content))
-            
+            # FTS triggers automatically keep index in sync - no manual insertion needed
+
+            # Commit the note first to avoid database locking
+            conn.commit()
+
             # If we have an audio file, queue it for Whisper processing
             if request.audio_file and request.use_whisper and audio_result:
-                from services.audio_queue import AudioProcessingQueue
-                queue = AudioProcessingQueue()
-                await queue.add_to_queue(note_id, user_id, priority=1)  # High priority for Shortcuts
-            
-            conn.commit()
+                try:
+                    from services.audio_queue import AudioProcessingQueue
+                    queue = AudioProcessingQueue()
+                    queue.add_to_queue(note_id, user_id, priority=1)  # High priority for Shortcuts
+                except Exception as e:
+                    print(f"⚠️ Failed to queue audio processing (note saved successfully): {e}")
+                    # Note is still saved, just audio processing won't happen automatically
             
             return {
                 "success": True,
@@ -583,7 +586,7 @@ class AppleShortcutsService:
         
         return f"{prefix}{title}" if title else f"{prefix}Quick Note"
     
-    async def _process_audio_file(self, audio_base64: str, user_id: int) -> Optional[str]:
+    def _process_audio_file(self, audio_base64: str, user_id: int) -> Optional[str]:
         """Process base64 encoded audio file from Shortcuts"""
         try:
             import base64

@@ -1,0 +1,246 @@
+{% extends 'base.html' %}
+{% block title %}Style Consistency Test – Second Brain{% endblock %}
+{% block head_extra %}
+    <style>
+        /* Test page specific styles using CSS variables */
+        .test-section {
+            background: var(--surface-primary);
+            border: 1px solid var(--border-primary);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .test-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .test-subtitle {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .test-component {
+            margin-bottom: 0.75rem;
+        }
+
+        .test-component label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-tertiary);
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+
+        .test-component input, .test-component textarea {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            background: var(--surface-secondary);
+            border: 1px solid var(--border-secondary);
+            border-radius: 0.5rem;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .test-component input:focus, .test-component textarea:focus {
+            outline: none;
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+        }
+
+        .test-button {
+            padding: 0.75rem 1.5rem;
+            background: var(--discord-500);
+            border: none;
+            border-radius: 0.5rem;
+            color: white;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 200ms ease;
+        }
+
+        .test-button:hover {
+            background: var(--discord-600);
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.25);
+        }
+
+        .color-swatch {
+            display: inline-block;
+            width: 2rem;
+            height: 2rem;
+            border-radius: 0.25rem;
+            border: 1px solid var(--border-secondary);
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto p-6 space-y-6">
+  <!-- Header -->
+  <div class="test-section">
+    <h1 class="test-title">🎨 Style Consistency Test</h1>
+    <p class="test-subtitle">Testing consistent styling across Dashboard v3 theme</p>
+    <div class="flex flex-wrap gap-4">
+      <a href="/dashboard/v3" class="test-button">Dashboard v3</a>
+      <a href="/dashboard" class="test-button">Dashboard</a>
+      <a href="/search" class="test-button">Search</a>
+      <a href="/login" class="test-button">Login</a>
+    </div>
+  </div>
+
+  <!-- Color Palette -->
+  <div class="test-section">
+    <h2 class="test-title">🎨 Color Palette</h2>
+    <p class="test-subtitle">Dashboard v3 color scheme</p>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="test-component">
+        <label>Primary (Discord)</label>
+        <div class="flex items-center">
+          <div class="color-swatch" style="background: var(--color-primary);"></div>
+          <span class="text-sm text-text-primary">var(--color-primary)</span>
+        </div>
+      </div>
+      <div class="test-component">
+        <label>Background</label>
+        <div class="flex items-center">
+          <div class="color-swatch" style="background: var(--bg-primary);"></div>
+          <span class="text-sm text-text-primary">var(--bg-primary)</span>
+        </div>
+      </div>
+      <div class="test-component">
+        <label>Surface</label>
+        <div class="flex items-center">
+          <div class="color-swatch" style="background: var(--surface-primary);"></div>
+          <span class="text-sm text-text-primary">var(--surface-primary)</span>
+        </div>
+      </div>
+      <div class="test-component">
+        <label>Text</label>
+        <div class="flex items-center">
+          <div class="color-swatch" style="background: var(--text-primary);"></div>
+          <span class="text-sm text-text-primary">var(--text-primary)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form Components -->
+  <div class="test-section">
+    <h2 class="test-title">📝 Form Components</h2>
+    <p class="test-subtitle">Consistent form styling</p>
+    <div class="space-y-4">
+      <div class="test-component">
+        <label>Text Input</label>
+        <input type="text" placeholder="Enter text..." class="w-full">
+      </div>
+      <div class="test-component">
+        <label>Textarea</label>
+        <textarea rows="3" placeholder="Enter multiple lines..."></textarea>
+      </div>
+      <div class="test-component">
+        <label>Search Input</label>
+        <input type="search" placeholder="Search for notes..." class="w-full">
+      </div>
+      <button class="test-button">Submit Form</button>
+    </div>
+  </div>
+
+  <!-- Card Components -->
+  <div class="test-section">
+    <h2 class="test-title">📱 Card Components</h2>
+    <p class="test-subtitle">Consistent card styling with hover effects</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="test-component" style="background: var(--surface-primary); border: 1px solid var(--border-primary); border-radius: 0.75rem; padding: 1.5rem;">
+        <h3 class="font-semibold text-text-primary mb-2">Card Title</h3>
+        <p class="text-text-secondary text-sm">This is a card component with consistent styling.</p>
+        <div class="mt-3">
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" style="background: var(--color-primary-50); color: var(--text-link);">
+            Tag
+          </span>
+        </div>
+      </div>
+      <div class="test-component" style="background: var(--surface-primary); border: 1px solid var(--border-primary); border-radius: 0.75rem; padding: 1.5rem;">
+        <h3 class="font-semibold text-text-primary mb-2">Another Card</h3>
+        <p class="text-text-secondary text-sm">Cards should have consistent spacing and colors.</p>
+        <button class="mt-3 test-button" style="padding: 0.5rem 1rem; font-size: 0.875rem;">
+          Action
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Typography -->
+  <div class="test-section">
+    <h2 class="test-title">📝 Typography</h2>
+    <p class="test-subtitle">Consistent text hierarchy</p>
+    <div class="space-y-3">
+      <h1 class="text-3xl font-bold text-text-primary">Heading 1</h1>
+      <h2 class="text-2xl font-semibold text-text-primary">Heading 2</h2>
+      <h3 class="text-xl font-medium text-text-primary">Heading 3</h3>
+      <p class="text-text-primary">This is regular body text that should be easy to read with good contrast.</p>
+      <p class="text-text-secondary">This is secondary text for less important information.</p>
+      <p class="text-text-tertiary text-sm">This is tertiary text for supporting details.</p>
+      <a href="#" class="text-text-link hover:text-text-link-hover underline">This is a link</a>
+    </div>
+  </div>
+
+  <!-- Navigation Test -->
+  <div class="test-section">
+    <h2 class="test-title">🧭 Navigation Test</h2>
+    <p class="test-subtitle">Testing navigation consistency</p>
+    <div class="flex space-x-4">
+      <a href="/dashboard/v3" class="px-4 py-2 rounded-lg font-medium transition-all text-sm" style="background: var(--color-primary-50); color: var(--text-link);">
+        Dashboard v3
+      </a>
+      <a href="/search" class="px-4 py-2 rounded-lg font-medium transition-all text-sm" style="color: var(--text-secondary); border: 1px solid var(--border-secondary);">
+        Search
+      </a>
+      <a href="/login" class="px-4 py-2 rounded-lg font-medium transition-all text-sm" style="color: var(--text-secondary); border: 1px solid var(--border-secondary);">
+        Login
+      </a>
+    </div>
+  </div>
+
+  <!-- Status Indicators -->
+  <div class="test-section">
+    <h2 class="test-title">📊 Status Indicators</h2>
+    <p class="test-subtitle">Consistent status colors and indicators</p>
+    <div class="flex flex-wrap gap-4">
+      <div class="flex items-center space-x-2">
+        <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+        <span class="text-text-secondary">Online</span>
+      </div>
+      <div class="flex items-center space-x-2">
+        <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
+        <span class="text-text-secondary">Busy</span>
+      </div>
+      <div class="flex items-center space-x-2">
+        <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+        <span class="text-text-secondary">Offline</span>
+      </div>
+      <div class="flex items-center space-x-2">
+        <div class="w-3 h-3 bg-gray-500 rounded-full"></div>
+        <span class="text-text-secondary">Unknown</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Simple test to verify CSS variables are working
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('🎨 Style test loaded');
+  console.log('Primary color:', getComputedStyle(document.documentElement).getPropertyValue('--text-primary'));
+  console.log('Background color:', getComputedStyle(document.documentElement).getPropertyValue('--bg-primary'));
+});
+</script>
+{% endblock %}

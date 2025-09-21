@@ -8,11 +8,12 @@ CREATE TABLE IF NOT EXISTS monitoring_metrics (
     metric_name TEXT NOT NULL,
     metric_value REAL NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    labels TEXT, -- JSON string for metric labels/tags
-    
-    INDEX idx_monitoring_metrics_name_timestamp (metric_name, timestamp),
-    INDEX idx_monitoring_metrics_timestamp (timestamp)
+    labels TEXT -- JSON string for metric labels/tags
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_metrics_name_timestamp 
+    ON monitoring_metrics(metric_name, timestamp);
+CREATE INDEX IF NOT EXISTS idx_monitoring_metrics_timestamp 
+    ON monitoring_metrics(timestamp);
 
 -- Monitoring alerts table for alert history and status
 CREATE TABLE IF NOT EXISTS monitoring_alerts (
@@ -22,13 +23,16 @@ CREATE TABLE IF NOT EXISTS monitoring_alerts (
     message TEXT NOT NULL,
     triggered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     resolved_at DATETIME NULL,
-    metadata TEXT, -- JSON string for additional alert data
-    
-    INDEX idx_monitoring_alerts_name (alert_name),
-    INDEX idx_monitoring_alerts_level (alert_level),
-    INDEX idx_monitoring_alerts_triggered (triggered_at),
-    INDEX idx_monitoring_alerts_active (resolved_at) -- NULL values for active alerts
+    metadata TEXT -- JSON string for additional alert data
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_name 
+    ON monitoring_alerts(alert_name);
+CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_level 
+    ON monitoring_alerts(alert_level);
+CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_triggered 
+    ON monitoring_alerts(triggered_at);
+CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_active 
+    ON monitoring_alerts(resolved_at);
 
 -- System health checks history
 CREATE TABLE IF NOT EXISTS monitoring_health_checks (
@@ -38,12 +42,14 @@ CREATE TABLE IF NOT EXISTS monitoring_health_checks (
     response_time_ms REAL NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     error_message TEXT NULL,
-    details TEXT, -- JSON string for additional details
-    
-    INDEX idx_monitoring_health_service_timestamp (service_name, timestamp),
-    INDEX idx_monitoring_health_status (status),
-    INDEX idx_monitoring_health_timestamp (timestamp)
+    details TEXT -- JSON string for additional details
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_health_service_timestamp 
+    ON monitoring_health_checks(service_name, timestamp);
+CREATE INDEX IF NOT EXISTS idx_monitoring_health_status 
+    ON monitoring_health_checks(status);
+CREATE INDEX IF NOT EXISTS idx_monitoring_health_timestamp 
+    ON monitoring_health_checks(timestamp);
 
 -- Performance metrics aggregation table
 CREATE TABLE IF NOT EXISTS monitoring_performance_summary (
@@ -67,12 +73,14 @@ CREATE TABLE IF NOT EXISTS monitoring_performance_summary (
             ELSE 0
         END
     ) STORED,
-    
-    UNIQUE(period_start, period_end, endpoint, method),
-    INDEX idx_monitoring_perf_period (period_start, period_end),
-    INDEX idx_monitoring_perf_endpoint (endpoint),
-    INDEX idx_monitoring_perf_method (method)
+    UNIQUE(period_start, period_end, endpoint, method)
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_perf_period 
+    ON monitoring_performance_summary(period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_monitoring_perf_endpoint 
+    ON monitoring_performance_summary(endpoint);
+CREATE INDEX IF NOT EXISTS idx_monitoring_perf_method 
+    ON monitoring_performance_summary(method);
 
 -- Security events tracking
 CREATE TABLE IF NOT EXISTS monitoring_security_events (
@@ -84,13 +92,16 @@ CREATE TABLE IF NOT EXISTS monitoring_security_events (
     endpoint TEXT,
     message TEXT NOT NULL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    metadata TEXT, -- JSON string for additional event data
-    
-    INDEX idx_monitoring_security_type (event_type),
-    INDEX idx_monitoring_security_severity (severity),
-    INDEX idx_monitoring_security_timestamp (timestamp),
-    INDEX idx_monitoring_security_ip (source_ip)
+    metadata TEXT -- JSON string for additional event data
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_security_type 
+    ON monitoring_security_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_monitoring_security_severity 
+    ON monitoring_security_events(severity);
+CREATE INDEX IF NOT EXISTS idx_monitoring_security_timestamp 
+    ON monitoring_security_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_monitoring_security_ip 
+    ON monitoring_security_events(source_ip);
 
 -- System resource monitoring
 CREATE TABLE IF NOT EXISTS monitoring_system_resources (
@@ -104,10 +115,10 @@ CREATE TABLE IF NOT EXISTS monitoring_system_resources (
     disk_used_gb REAL NOT NULL,
     disk_free_gb REAL NOT NULL,
     active_connections INTEGER NOT NULL DEFAULT 0,
-    load_average TEXT, -- JSON array of load averages [1m, 5m, 15m]
-    
-    INDEX idx_monitoring_system_timestamp (timestamp)
+    load_average TEXT -- JSON array of load averages [1m, 5m, 15m]
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_system_timestamp 
+    ON monitoring_system_resources(timestamp);
 
 -- Daily monitoring summary for reporting
 CREATE TABLE IF NOT EXISTS monitoring_daily_summary (
@@ -121,10 +132,10 @@ CREATE TABLE IF NOT EXISTS monitoring_daily_summary (
     searches_performed INTEGER NOT NULL DEFAULT 0,
     failed_authentications INTEGER NOT NULL DEFAULT 0,
     alerts_triggered INTEGER NOT NULL DEFAULT 0,
-    uptime_percent REAL NOT NULL DEFAULT 100.0,
-    
-    INDEX idx_monitoring_daily_date (date)
+    uptime_percent REAL NOT NULL DEFAULT 100.0
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_daily_date 
+    ON monitoring_daily_summary(date);
 
 -- Application-specific monitoring
 CREATE TABLE IF NOT EXISTS monitoring_application_events (
@@ -136,13 +147,16 @@ CREATE TABLE IF NOT EXISTS monitoring_application_events (
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER,
     metadata TEXT, -- JSON string for event-specific data
-    
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    INDEX idx_monitoring_app_name_timestamp (event_name, timestamp),
-    INDEX idx_monitoring_app_category (event_category),
-    INDEX idx_monitoring_app_status (status),
-    INDEX idx_monitoring_app_user (user_id)
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
+CREATE INDEX IF NOT EXISTS idx_monitoring_app_name_timestamp 
+    ON monitoring_application_events(event_name, timestamp);
+CREATE INDEX IF NOT EXISTS idx_monitoring_app_category 
+    ON monitoring_application_events(event_category);
+CREATE INDEX IF NOT EXISTS idx_monitoring_app_status 
+    ON monitoring_application_events(status);
+CREATE INDEX IF NOT EXISTS idx_monitoring_app_user 
+    ON monitoring_application_events(user_id);
 
 -- Create views for common monitoring queries
 CREATE VIEW IF NOT EXISTS monitoring_active_alerts AS
@@ -184,7 +198,6 @@ ORDER BY hour DESC, total_requests DESC;
 
 -- Add some indexes for performance optimization
 CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at);
-CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at);
 
 -- Update schema version
 PRAGMA user_version = 13;

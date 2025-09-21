@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test URL Ingestion</title>
+</head>
+<body>
+    <h1>URL Ingestion Test</h1>
+    <button onclick="testURLIngestion()">Test URL Ingestion</button>
+    <div id="result"></div>
+
+    <script>
+        async function testURLIngestion() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing...';
+
+            try {
+                console.log('Making request to /api/ingest/url');
+
+                const response = await fetch('/api/ingest/url', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url: "https://example.com",
+                        context: "Test from debug page",
+                        auto_title: true,
+                        auto_tags: true,
+                        auto_summary: true
+                    })
+                });
+
+                console.log('Response status:', response.status);
+                const result = await response.json();
+                console.log('Response:', result);
+
+                resultDiv.innerHTML = `
+                    <h3>Response (${response.status}):</h3>
+                    <pre>${JSON.stringify(result, null, 2)}</pre>
+                `;
+
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = `<h3>Error:</h3><pre>${error.message}</pre>`;
+            }
+        }
+    </script>
+</body>
+</html>

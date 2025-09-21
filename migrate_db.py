@@ -8,7 +8,7 @@ import sqlite3
 import os
 import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -18,8 +18,26 @@ class MigrationRunner:
     def __init__(self, db_path: str, migrations_dir: str = "db/migrations"):
         self.db_path = db_path
         self.migrations_dir = Path(migrations_dir)
+        self.sqlite_vec_path = self._locate_sqlite_vec()
         self._ensure_migrations_table()
-    
+
+    def _locate_sqlite_vec(self) -> Optional[str]:
+        """Best-effort detection of sqlite-vec loadable extension."""
+        path = os.getenv("SQLITE_VEC_PATH")
+        if path:
+            return path
+        try:
+            import sqlite_vec  # type: ignore
+
+            loader = getattr(sqlite_vec, "loadable_path", None)
+            if callable(loader):
+                detected = loader()
+                if detected:
+                    return detected
+        except Exception:
+            pass
+        return None
+
     def _ensure_migrations_table(self):
         """Create migrations tracking table if it doesn't exist"""
         conn = sqlite3.connect(self.db_path)
@@ -83,6 +101,12 @@ class MigrationRunner:
             
             # Apply migration using executescript to properly handle triggers and multi-statement blocks
             conn = sqlite3.connect(self.db_path)
+            if self.sqlite_vec_path:
+                try:
+                    conn.enable_load_extension(True)
+                    conn.load_extension(self.sqlite_vec_path)
+                except Exception as ext_err:
+                    logger.debug(f"sqlite-vec load failed ({self.sqlite_vec_path}): {ext_err}")
             conn.executescript(sql_content)
             
             # Record migration as applied

@@ -47,7 +47,8 @@
         "WFURL": "http://localhost:8082/api/shortcuts/reminder",
         "WFHTTPMethod": "POST",
         "WFHTTPHeaders": {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Authorization": "Bearer INSERT_SECOND_BRAIN_TOKEN"
         },
         "WFRequestVariable": {
           "Value": {

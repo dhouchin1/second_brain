@@ -4,18 +4,18 @@
 :root {
   /* === SEMANTIC COLOR PALETTE === */
   
-  /* Primary Brand Colors - Knowledge & Intelligence Theme */
-  --color-primary-50: #eff6ff;
-  --color-primary-100: #dbeafe;
-  --color-primary-200: #bfdbfe;
-  --color-primary-300: #93c5fd;
-  --color-primary-400: #60a5fa;
-  --color-primary-500: #3b82f6;  /* Main brand blue */
-  --color-primary-600: #2563eb;
-  --color-primary-700: #1d4ed8;
-  --color-primary-800: #1e40af;
-  --color-primary-900: #1e3a8a;
-  --color-primary-950: #172554;
+  /* Primary Brand Colors - Dashboard v3 Theme */
+  --color-primary-50: rgba(99, 102, 241, 0.1);
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;  /* Main Discord purple */
+  --color-primary-600: #5145cd;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
+  --color-primary-950: #1e3a8a;
 
   /* Secondary Colors - Creativity & Innovation */
   --color-secondary-50: #fdf4ff;
@@ -76,37 +76,68 @@
   --color-info-700: #0e7490;
 
   /* === SEMANTIC TOKENS === */
+
+  /* Background Colors - Dark Theme (Dashboard v3) */
+  --bg-primary: #0f172a;
+  --bg-secondary: #16202b;
+  --bg-tertiary: #202c39;
+  --bg-accent: rgba(99, 102, 241, 0.1);
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --bg-glass: rgba(22, 32, 43, 0.8);
+
+  /* Light Theme Support (for specific pages) */
+  --bg-primary-light: var(--color-neutral-0);
+  --bg-secondary-light: var(--color-neutral-50);
+  --bg-tertiary-light: var(--color-neutral-100);
+  --bg-accent-light: var(--color-primary-50);
+  --bg-overlay-light: rgba(0, 0, 0, 0.5);
+  --bg-glass-light: rgba(255, 255, 255, 0.8);
   
-  /* Background Colors */
-  --bg-primary: var(--color-neutral-0);
-  --bg-secondary: var(--color-neutral-50);
-  --bg-tertiary: var(--color-neutral-100);
-  --bg-accent: var(--color-primary-50);
-  --bg-overlay: rgba(0, 0, 0, 0.5);
-  --bg-glass: rgba(255, 255, 255, 0.8);
+  /* Surface Colors - Dark Theme */
+  --surface-primary: rgba(22, 32, 43, 0.8);
+  --surface-secondary: rgba(30, 41, 59, 0.6);
+  --surface-elevated: rgba(22, 32, 43, 0.9);
+  --surface-interactive: rgba(99, 102, 241, 0.1);
+
+  /* Light Theme Surface Colors */
+  --surface-primary-light: var(--color-neutral-0);
+  --surface-secondary-light: var(--color-neutral-50);
+  --surface-elevated-light: var(--color-neutral-0);
+  --surface-interactive-light: var(--color-neutral-100);
+
+  /* Border Colors - Dark Theme */
+  --border-primary: rgba(148, 163, 184, 0.12);
+  --border-secondary: rgba(148, 163, 184, 0.2);
+  --border-accent: rgba(99, 102, 241, 0.2);
+  --border-focus: #6366f1;
+  --border-error: rgba(239, 68, 68, 0.3);
+
+  /* Light Theme Border Colors */
+  --border-primary-light: var(--color-neutral-200);
+  --border-secondary-light: var(--color-neutral-300);
+  --border-accent-light: var(--color-primary-200);
+  --border-focus-light: var(--color-primary-400);
+  --border-error-light: var(--color-error-300);
   
-  /* Surface Colors */
-  --surface-primary: var(--color-neutral-0);
-  --surface-secondary: var(--color-neutral-50);
-  --surface-elevated: var(--color-neutral-0);
-  --surface-interactive: var(--color-neutral-100);
-  
-  /* Border Colors */
-  --border-primary: var(--color-neutral-200);
-  --border-secondary: var(--color-neutral-300);
-  --border-accent: var(--color-primary-200);
-  --border-focus: var(--color-primary-400);
-  --border-error: var(--color-error-300);
-  
-  /* Text Colors */
-  --text-primary: var(--color-neutral-900);
-  --text-secondary: var(--color-neutral-700);
-  --text-tertiary: var(--color-neutral-500);
-  --text-muted: var(--color-neutral-400);
-  --text-inverse: var(--color-neutral-0);
-  --text-accent: var(--color-primary-600);
-  --text-link: var(--color-primary-600);
-  --text-link-hover: var(--color-primary-700);
+  /* Text Colors - Dark Theme */
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-muted: #475569;
+  --text-inverse: #0f172a;
+  --text-accent: #6366f1;
+  --text-link: #818cf8;
+  --text-link-hover: #a5b4fc;
+
+  /* Light Theme Text Colors */
+  --text-primary-light: var(--color-neutral-900);
+  --text-secondary-light: var(--color-neutral-700);
+  --text-tertiary-light: var(--color-neutral-500);
+  --text-muted-light: var(--color-neutral-400);
+  --text-inverse-light: var(--color-neutral-0);
+  --text-accent-light: var(--color-primary-600);
+  --text-link-light: var(--color-primary-600);
+  --text-link-hover-light: var(--color-primary-700);
 
   /* === TYPOGRAPHY SYSTEM === */
   

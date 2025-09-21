@@ -10,8 +10,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Second Brain">
-    <meta name="theme-color" content="#3b82f6">
-    <meta name="msapplication-navbutton-color" content="#3b82f6">
+    <meta name="theme-color" content="#6366f1">
+    <meta name="msapplication-navbutton-color" content="#6366f1">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     
     <!-- Preconnect for performance -->
@@ -28,40 +28,37 @@
     <link rel="stylesheet" href="/static/css/dashboard-enhanced.css">
     <link rel="stylesheet" href="/static/css/advanced-search.css">
 
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        'sans': ['Inter', 'system-ui', 'sans-serif']
-                    },
-                    colors: {
-                        discord: {
-                            400: '#60a5fa',
-                            500: '#3b82f6',
-                            600: '#2563eb'
-                        },
-                        notion: {
-                            400: '#60a5fa',
-                            500: '#3b82f6',
-                            600: '#2563eb'
-                        }
-                    }
-                }
-            }
+    <!-- Using global Tailwind config from base template -->
+    <style>
+        /* Search page specific overrides */
+        .search-container {
+            background: var(--surface-primary);
+            border: 1px solid var(--border-primary);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
         }
-    </script>
+    </style>
 
     <style>
         /* Keep only minimal helpers unique to this page */
-        .search-title { font-size: 1.5rem; font-weight: 700; color: #1e293b; margin-bottom: 0.25rem; }
-        .search-subtitle { font-size: 0.875rem; color: #64748b; margin-bottom: 0; }
-        .section-title { font-size: 0.875rem; font-weight: 600; color: #334155; margin-bottom: 0.5rem; }
-        .filter-label { font-size: 0.75rem; font-weight: 500; color: #64748b; margin-bottom: 0.5rem; display: block; }
+        .search-title { font-size: 1.5rem; font-weight: 700; color: var(--text-primary); margin-bottom: 0.25rem; }
+        .search-subtitle { font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0; }
+        .section-title { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem; }
+        .filter-label { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.5rem; display: block; }
+
+        /* Search-specific enhancements */
+        .search-container {
+            background: var(--surface-primary);
+            border: 1px solid var(--border-primary);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+        }
     </style>
 </head>
 
-<body class="h-full bg-slate-50 font-sans text-slate-700" data-mobile-interface="enabled" style="overflow-x: hidden; overscroll-behavior: none;">
+<body class="h-full font-sans text-slate-100" data-mobile-interface="enabled" style="overflow-x: hidden; overscroll-behavior: none;">
     <!-- App Container -->
     <div id="app" class="flex h-full overflow-hidden">
         

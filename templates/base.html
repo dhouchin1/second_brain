@@ -29,24 +29,222 @@
   
   <!-- Styles -->
   <link rel="stylesheet" href="/static/css/design-system.css" />
+  <link rel="stylesheet" href="/static/css/app-shell.css" />
+  <link rel="stylesheet" href="/static/css/components.css" />
+  <link rel="stylesheet" href="/static/css/dashboard-enhanced.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   {% block head_extra %}{% endblock %}
+
+  <!-- Dashboard v3 Color Scheme -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            'sans': ['Inter', 'system-ui', 'sans-serif']
+          },
+          colors: {
+            // Dark theme color palette - sophisticated grays
+            slate: {
+              25: '#0a0e13',
+              50: '#0f1419',
+              100: '#16202b',
+              150: '#1a252f',
+              200: '#202c39',
+              250: '#283542',
+              300: '#334155',
+              350: '#3f4c5c',
+              400: '#4a5568',
+              450: '#5a6575',
+              500: '#64748b',
+              600: '#94a3b8',
+              700: '#cbd5e1',
+              750: '#d1d9e1',
+              800: '#e2e8f0',
+              850: '#f1f5f9',
+              900: '#f8fafc'
+            },
+            // Discord-inspired accents
+            discord: {
+              50: '#f0f4ff',
+              100: '#e0e7ff',
+              200: '#c7d2fe',
+              300: '#a5b4fc',
+              400: '#818cf8',
+              500: '#6366f1', // Primary discord-like purple
+              600: '#5145cd',
+              700: '#4338ca',
+              800: '#3730a3',
+              900: '#312e81'
+            },
+            // Notion-inspired greens
+            notion: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              200: '#bbf7d0',
+              300: '#86efac',
+              400: '#4ade80',
+              500: '#22c55e', // Notion green
+              600: '#16a34a',
+              700: '#15803d',
+              800: '#166534',
+              900: '#14532d'
+            },
+            // Spotify-inspired accent
+            spotify: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              200: '#bbf7d0',
+              300: '#86efac',
+              400: '#4ade80',
+              500: '#1db954',
+              600: '#1ed760'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
   <style>
-    /* Lightweight toast system */
-    #toast-container { position: fixed; top: 16px; right: 16px; z-index: var(--z-toast); display: flex; flex-direction: column; gap: 8px; }
-    .toast { padding: 10px 12px; border-radius: 10px; font-size: 14px; color: #fff; box-shadow: var(--shadow-lg); opacity: .98; transition: transform .2s ease, opacity .2s ease; }
-    .toast.success { background: rgba(34,197,94,.95); }
-    .toast.error { background: rgba(239,68,68,.95); }
-    .toast.info { background: rgba(59,130,246,.95); }
-    .toast.hide { opacity: 0; transform: translateY(-8px); }
+    /* Lightweight toast system with dashboard v3 colors */
+    #toast-container {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: var(--z-toast);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 14px;
+      color: #fff;
+      box-shadow: var(--shadow-lg);
+      opacity: .98;
+      transition: transform .2s ease, opacity .2s ease;
+      background: rgba(99, 102, 241, 0.9);
+      backdrop-filter: blur(10px);
+    }
+    .toast.success {
+      background: rgba(34, 197, 94, 0.9);
+    }
+    .toast.error {
+      background: rgba(239, 68, 68, 0.9);
+    }
+    .toast.warning {
+      background: rgba(245, 158, 11, 0.9);
+    }
+    .toast.hide {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+
+    /* Default light theme styling - Dashboard v3 */
+    body {
+      background:
+        radial-gradient(circle at top left, rgba(99, 102, 241, 0.08), transparent 60%),
+        radial-gradient(circle at top right, rgba(236, 72, 153, 0.06), transparent 65%),
+        linear-gradient(180deg, #f8fafc 0%, #f1f5f9 35%, #f1f5f9 100%);
+      color: #0f172a;
+    }
+
+    /* Safe area support for mobile */
+    :root {
+      --safe-area-inset-top: env(safe-area-inset-top, 0px);
+      --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-area-inset-left: env(safe-area-inset-left, 0px);
+      --safe-area-inset-right: env(safe-area-inset-right, 0px);
+    }
+
+    body {
+      padding-top: var(--safe-area-inset-top);
+      padding-bottom: var(--safe-area-inset-bottom);
+      padding-left: var(--safe-area-inset-left);
+      padding-right: var(--safe-area-inset-right);
+    }
+
+    /* CSS Variables for consistent theming - Light Theme (Dashboard v3) */
+    :root {
+      /* Light Theme Colors */
+      --color-primary: #6366f1;
+      --color-primary-50: rgba(99, 102, 241, 0.1);
+      --color-primary-500: #6366f1;
+      --color-primary-600: #5145cd;
+      --color-primary-700: #4338ca;
+
+      /* Background Colors */
+      --bg-primary: #f8fafc;
+      --bg-secondary: #f1f5f9;
+      --bg-tertiary: #e2e8f0;
+      --bg-accent: rgba(99, 102, 241, 0.08);
+      --bg-overlay: rgba(255, 255, 255, 0.8);
+      --bg-glass: rgba(248, 250, 252, 0.9);
+
+      /* Surface Colors */
+      --surface-primary: rgba(248, 250, 252, 0.9);
+      --surface-secondary: rgba(241, 245, 249, 0.7);
+      --surface-elevated: rgba(248, 250, 252, 0.95);
+      --surface-interactive: rgba(99, 102, 241, 0.08);
+
+      /* Border Colors */
+      --border-primary: rgba(148, 163, 184, 0.15);
+      --border-secondary: rgba(148, 163, 184, 0.25);
+      --border-accent: rgba(99, 102, 241, 0.15);
+      --border-focus: #6366f1;
+
+      /* Text Colors */
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-tertiary: #64748b;
+      --text-muted: #94a3b8;
+      --text-inverse: #f8fafc;
+      --text-accent: #6366f1;
+      --text-link: #5145cd;
+      --text-link-hover: #4338ca;
+
+      /* Discord Colors */
+      --discord-500: #6366f1;
+      --discord-600: #5145cd;
+      --discord-700: #4338ca;
+      --discord-800: #3730a3;
+      --discord-900: #312e81;
+
+      /* Status Colors */
+      --color-success-500: #22c55e;
+      --color-success-600: #16a34a;
+      --color-warning-500: #f59e0b;
+      --color-error-500: #ef4444;
+
+      /* Spacing and Layout */
+      --space-1: 0.25rem;
+      --space-2: 0.5rem;
+      --space-3: 0.75rem;
+      --space-4: 1rem;
+      --radius-sm: 0.25rem;
+      --radius-md: 0.375rem;
+      --radius-lg: 0.5rem;
+      --radius-full: 9999px;
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+      --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+      --z-toast: 50;
+      --z-dropdown: 40;
+    }
   </style>
 </head>
-<body class="{% block body_class %}{% endblock %}">
-  {% include 'partials/header.html' %}
-  {% include 'partials/userbar.html' %}
-  {% include 'partials/flash.html' %}
-  <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
-  {% block content %}{% endblock %}
+<body class="app-body {% block body_class %}{% endblock %}">
+  <div class="app-shell">
+    {% include 'partials/header.html' %}
+    <main class="app-content {% block content_wrapper_class %}{% endblock %}">
+      {% include 'partials/flash.html' %}
+      <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
   <script>
     // Global toast helper
     window.showToast = function(message, type){

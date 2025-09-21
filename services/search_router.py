@@ -244,34 +244,265 @@ async def enhanced_search(
 @router.post("")
 @router.post("/")
 async def search(
-    request: SearchRequest,
+    request_data: dict = Body(...),
     current_user: User = Depends(get_current_user)
 ):
-    """Advanced search with filters and semantic similarity via SearchService"""
+    """Simple POST search endpoint for frontend compatibility"""
     start_time = time.time()
-    svc = _get_search_service()
-    mode = _resolve_search_mode(request.filters)
-    rows = svc.search(request.query, mode=mode, k=request.limit or 20)
-    # Convert sqlite3.Row to dict
-    notes = [{k: row[k] for k in row.keys()} for row in rows]
-    
-    # Record search in history
-    response_time_ms = int((time.time() - start_time) * 1000)
-    if search_history_service and request.query.strip():
+    try:
+        # Extract search parameters
+        query = request_data.get("query", "")
+        limit = min(request_data.get("limit", 20), 100)
+        filters = request_data.get("filters", {}) or {}
+
+        if not query:
+            return {
+                "results": [],
+                "total": 0,
+                "query": "",
+                "mode": "hybrid",
+                "response_time_ms": 0
+            }
+
+        # Parse special search syntax
+        conditions = []
+        params = [current_user.id]
+
+        # Check for special syntax (tag:, type:, etc.)
+        if query.startswith("tag:"):
+            tag_value = query[4:].strip()
+            conditions.append("tags LIKE ?")
+            params.append(f"%{tag_value}%")
+        elif query.startswith("type:"):
+            type_value = query[5:].strip()
+            conditions.append("type = ?")
+            params.append(type_value)
+        elif query.startswith("source:"):
+            source_value = query[7:].strip()
+            conditions.append("web_metadata LIKE ?")
+            params.append(f"%{source_value}%")
+        elif query.lower() in ['voice', 'audio']:
+            # Quick filter for voice notes
+            conditions.append("type = 'audio'")
+        elif query.lower() in ['shortcuts', 'apple']:
+            # Quick filter for Apple Shortcuts
+            conditions.append("type = 'apple'")
+        elif query.lower() == 'today':
+            # Today's notes
+            conditions.append("DATE(created_at) = DATE('now')")
+        elif query.lower() == 'yesterday':
+            # Yesterday's notes
+            conditions.append("DATE(created_at) = DATE('now', '-1 day')")
+        elif query.lower() == 'week':
+            # This week's notes
+            conditions.append("created_at >= DATE('now', '-7 days')")
+        else:
+            # Regular text search
+            search_query = f"%{query}%"
+            conditions.append("(title LIKE ? OR content LIKE ? OR summary LIKE ? OR tags LIKE ?)")
+            params.extend([search_query, search_query, search_query, search_query])
+
+        # Apply additional filters from UI (audio/files/AI/recent)
+        type_filters = filters.get("types") or []
+        if isinstance(filters.get("type"), str):
+            type_filters = [filters["type"]]
+        elif isinstance(filters.get("type"), list):
+            type_filters = filters["type"]
+
+        type_clauses = []
+        for t in type_filters:
+            if t == 'audio':
+                type_clauses.append("(type = 'audio' OR audio_filename IS NOT NULL)")
+            elif t == 'file':
+                type_clauses.append("(file_filename IS NOT NULL AND (file_type IS NULL OR file_type <> 'image'))")
+            elif t in {'ai_generated', 'ai'}:
+                type_clauses.append("((type = 'ai' OR type = 'ai_generated') OR (summary IS NOT NULL AND summary <> ''))")
+
+        if type_clauses:
+            conditions.append("(" + " OR ".join(type_clauses) + ")")
+
+        if filters.get('recent'):
+            conditions.append("created_at >= datetime('now', '-7 days')")
+
+        # Build the final query
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        sql = f"""
+            SELECT id, title, content, summary, tags, type, timestamp, created_at, updated_at,
+                   web_metadata, audio_filename,
+                   CASE
+                       WHEN type = 'audio' THEN '🎤'
+                       WHEN type = 'text' THEN '📝'
+                       WHEN type = 'apple' THEN '🍎'
+                       WHEN type = 'web' THEN '🌐'
+                       ELSE '📄'
+                   END as type_icon,
+                   CASE
+                       WHEN type = 'audio' THEN 'Voice Note'
+                       WHEN type = 'text' THEN 'Text Note'
+                       WHEN type = 'apple' THEN 'Apple Shortcuts'
+                       WHEN type = 'web' THEN 'Web Clip'
+                       ELSE 'Document'
+                   END as type_label
+            FROM notes
+            WHERE user_id = ? AND {where_clause}
+            ORDER BY COALESCE(timestamp, created_at, updated_at) DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        # Use simple database search with enhanced filtering
+        conn = get_conn()
+        c = conn.cursor()
         try:
-            search_history_service.record_search(
-                current_user.id, request.query, mode, len(notes), response_time_ms
-            )
-        except Exception as e:
-            print(f"Search history recording error: {e}")
-    
-    return {
-        "results": notes,
-        "total": len(notes),
-        "query": request.query,
-        "mode": mode,
-        "response_time_ms": response_time_ms
-    }
+            rows = c.execute(sql, params).fetchall()
+
+            results = []
+            for row in rows:
+                note_dict = dict(zip([col[0] for col in c.description], row))
+                created_at = note_dict.get('created_at') or note_dict.get('timestamp') or note_dict.get('updated_at')
+                note_dict['created_at'] = created_at
+
+                # Enhanced metadata for different note types
+                if note_dict.get('type') == 'audio':
+                    # Parse web_metadata for voice note details
+                    try:
+                        import json
+                        metadata = json.loads(note_dict.get('web_metadata', '{}'))
+                        note_dict['voice_metadata'] = {
+                            'source': metadata.get('source', 'unknown'),
+                            'device': metadata.get('device'),
+                            'audio_duration': metadata.get('audio_duration'),
+                            'transcription_source': metadata.get('transcription_source', 'unknown'),
+                            'language': metadata.get('language', 'en-US')
+                        }
+                    except:
+                        note_dict['voice_metadata'] = {}
+
+                # Enhanced content preview based on type
+                content = note_dict.get('content', '')
+                if len(content) > 150:
+                    note_dict['content_preview'] = content[:150] + "..."
+                else:
+                    note_dict['content_preview'] = content
+
+                # Add search relevance context
+                search_term = query.lower()
+                if not query.startswith(('tag:', 'type:')):
+                    # Highlight search context
+                    for field in ['title', 'content', 'summary']:
+                        field_value = note_dict.get(field, '')
+                        if field_value and search_term in field_value.lower():
+                            note_dict['match_field'] = field
+                            break
+
+                results.append(note_dict)
+
+            # Calculate response time and determine search mode
+            response_time_ms = int((time.time() - start_time) * 1000)
+            search_mode = "keyword"  # This endpoint uses SQL-based keyword search
+
+            # Record search in history if available
+            if search_history_service and query.strip():
+                try:
+                    search_history_service.record_search(
+                        current_user.id, query, search_mode, len(results), response_time_ms
+                    )
+                except Exception as e:
+                    print(f"Search history recording error: {e}")
+
+            return {
+                "results": results,
+                "total": len(results),
+                "query": query,
+                "mode": search_mode,
+                "response_time_ms": response_time_ms
+            }
+        finally:
+            conn.close()
+
+    except Exception as e:
+        import traceback
+        print(f"Search endpoint error: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@router.get("/quick-filters")
+async def get_quick_filters(fastapi_request: Request):
+    """Get available quick search filters and syntax"""
+    try:
+        # Get current user
+        from services.auth_service import AuthService
+        auth_service = AuthService(get_conn)
+        current_user = await auth_service.get_current_user(fastapi_request)
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        # Get stats for each filter
+        conn = get_conn()
+        c = conn.cursor()
+        try:
+            # Count notes by type
+            type_counts = c.execute("""
+                SELECT type, COUNT(*) as count
+                FROM notes
+                WHERE user_id = ?
+                GROUP BY type
+                ORDER BY count DESC
+            """, (current_user.id,)).fetchall()
+
+            # Count today's notes
+            today_count = c.execute("""
+                SELECT COUNT(*) FROM notes
+                WHERE user_id = ? AND DATE(created_at) = DATE('now')
+            """, (current_user.id,)).fetchone()[0]
+
+            # Count this week's notes
+            week_count = c.execute("""
+                SELECT COUNT(*) FROM notes
+                WHERE user_id = ? AND created_at >= DATE('now', '-7 days')
+            """, (current_user.id,)).fetchone()[0]
+
+            # Get popular tags
+            popular_tags = c.execute("""
+                SELECT tags FROM notes
+                WHERE user_id = ? AND tags != ''
+                ORDER BY created_at DESC
+                LIMIT 50
+            """, (current_user.id,)).fetchall()
+
+            # Process tags
+            tag_counts = {}
+            for row in popular_tags:
+                if row[0]:
+                    for tag in row[0].split(','):
+                        tag = tag.strip()
+                        if tag:
+                            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+            top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            return {
+                "quick_filters": [
+                    {"query": "today", "label": "Today's Notes", "count": today_count, "icon": "📅"},
+                    {"query": "week", "label": "This Week", "count": week_count, "icon": "📆"},
+                    {"query": "voice", "label": "Voice Notes", "count": dict(type_counts).get('audio', 0), "icon": "🎤"},
+                    {"query": "shortcuts", "label": "Apple Shortcuts", "count": dict(type_counts).get('apple', 0), "icon": "🍎"},
+                ],
+                "search_syntax": [
+                    {"syntax": "tag:voice", "description": "Search by tag"},
+                    {"syntax": "type:audio", "description": "Search by note type"},
+                    {"syntax": "source:shortcuts", "description": "Search by source"},
+                ],
+                "popular_tags": [{"tag": tag, "count": count} for tag, count in top_tags],
+                "note_types": [{"type": row[0], "count": row[1]} for row in type_counts]
+            }
+
+        finally:
+            conn.close()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get filters: {str(e)}")
 
 
 @router.post("/hybrid")
@@ -763,17 +994,20 @@ async def test_search(
     mode: str = Query("keyword", description="Search mode")
 ):
     """Test endpoint for search functionality without authentication"""
+    start_time = time.time()
     try:
         svc = _get_search_service()
         rows = svc.search(q, mode=mode, k=10)
         results = [{k: row[k] for k in row.keys()} for row in rows]
-        
+        response_time_ms = int((time.time() - start_time) * 1000)
+
         return {
             "success": True,
             "query": q,
             "mode": mode,
             "results": results,
-            "total": len(results)
+            "total": len(results),
+            "response_time_ms": response_time_ms
         }
     except Exception as e:
         return {
@@ -782,7 +1016,8 @@ async def test_search(
             "query": q,
             "mode": mode,
             "results": [],
-            "total": 0
+            "total": 0,
+            "response_time_ms": 0
         }
 
 

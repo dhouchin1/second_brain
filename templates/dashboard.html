@@ -4,66 +4,42 @@
   <link rel="stylesheet" href="/static/css/design-system.css">
   <link rel="stylesheet" href="/static/css/components.css">
   <link rel="stylesheet" href="/static/css/dashboard-enhanced.css">
-  <style>
-    body { background: #f8fafc; font-family: 'Inter', Arial, sans-serif; color: #334155; }
-    ::-webkit-scrollbar { width: 8px; background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
-    .card-surface { 
-      background: rgba(248,250,252,.8); 
-      border: 1px solid rgba(203,213,225,.2); 
-      transition: all 300ms ease-in-out;
-      animation: fadeInUp 0.6s ease-out;
-    }
-    
-    .card-surface:hover {
-      background: rgba(255,255,255,.9);
-      border: 1px solid rgba(203,213,225,.3);
-      transform: translateY(-1px);
-      box-shadow: 0 8px 25px rgba(0,0,0,0.08);
-    }
-    
-    @keyframes fadeInUp {
-      from {
-        opacity: 0;
-        transform: translateY(20px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-    
-    /* Staggered animation for form elements */
-    .form-element-1 { animation: fadeInUp 0.6s ease-out 0.1s both; }
-    .form-element-2 { animation: fadeInUp 0.6s ease-out 0.2s both; }
-    .form-element-3 { animation: fadeInUp 0.6s ease-out 0.3s both; }
-    .form-element-4 { animation: fadeInUp 0.6s ease-out 0.4s both; }
-    .muted { color: #64748b; opacity: .8; }
-    .pill { background: rgba(248,250,252,.6); border: 1px solid rgba(203,213,225,.2); }
-    
-    /* Additional footer centering to ensure perfect alignment */
-    .footer {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      width: 100%;
-    }
-    .footer-content {
-      text-align: center;
-      width: 100%;
-      max-width: 768px;
-      margin: 0 auto;
-    }
-    .footer-description {
-      text-align: center;
-      margin: 0 auto;
-    }
-    .footer-links {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    
+    <style>
+        /* Dashboard-specific enhancements using CSS variables */
+        .card-surface {
+            background: var(--surface-primary);
+            border: 1px solid var(--border-primary);
+            backdrop-filter: blur(10px);
+            transition: all 300ms ease-in-out;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        .card-surface:hover {
+            background: var(--surface-elevated);
+            border: 1px solid var(--border-secondary);
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.15);
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Staggered animation for form elements */
+        .form-element-1 { animation: fadeInUp 0.6s ease-out 0.1s both; }
+        .form-element-2 { animation: fadeInUp 0.6s ease-out 0.2s both; }
+        .form-element-3 { animation: fadeInUp 0.6s ease-out 0.3s both; }
+        .form-element-4 { animation: fadeInUp 0.6s ease-out 0.4s both; }
+        .muted { color: var(--text-secondary); opacity: .8; }
+        .pill { background: var(--surface-secondary); border: 1px solid var(--border-secondary); }
+
     /* ========== BUTTON STANDARDIZATION SYSTEM ========== */
     
     /* Base button foundation - shared by all buttons */
@@ -263,7 +239,8 @@
     /* ========== END CUSTOM ENHANCEMENTS ========== */
   </style>
 {% endblock %}
-{% block body_class %}min-h-screen text-slate-100 bg-slate-900{% endblock %}
+{% block body_class %}min-h-screen text-slate-800 layout-light{% endblock %}
+{% block content_wrapper_class %}app-content--fluid{% endblock %}
 {% block content %}
 
   <!-- Ultra-Compact Header / Logo / Top Bar -->
@@ -273,17 +250,17 @@
     
     <div class="flex items-center justify-between w-full">
       <!-- Left side: Obsidian sync info -->
-      <div class="flex items-center gap-3 text-xs text-slate-400">
+      <div class="flex items-center gap-3 text-xs text-slate-500">
         <span>Obsidian</span>
         <span id="syncStatus">{% if last_sync %}Last: {{ last_sync }}{% else %}Never synced{% endif %}</span>
       </div>
-      
+
       <!-- Right side: Controls -->
       <div class="flex items-center gap-3">
         <!-- Dashboard Version Toggle -->
         <div class="flex items-center gap-2">
-          <span class="text-xs text-slate-500">Legacy Dashboard</span>
-          <a href="/dashboard/v3" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-md transition-colors font-medium">
+          <span class="text-xs text-slate-600">Legacy Dashboard</span>
+          <a href="/dashboard/v3" class="px-3 py-1 bg-discord-500 hover:bg-discord-600 text-white text-xs rounded-md transition-colors font-medium">
             Switch to New Dashboard
           </a>
         </div>
@@ -294,7 +271,7 @@
           <!-- Three-dot menu wrapped to position dropdown relative to the trigger -->
           <span class="relative inline-block">
             <button id="syncMore" title="More options" class="btn-base btn-ghost btn-sm">⋯</button>
-            <div id="syncMenu" class="hidden absolute right-0 top-full mt-2 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl text-slate-100 w-48">
+            <div id="syncMenu" class="hidden absolute right-0 top-full mt-2 z-50 bg-slate-100 border border-slate-200 rounded-lg shadow-xl text-slate-800 w-48">
               <button data-dir="from_obsidian" class="btn-base btn-ghost btn-sm btn-full text-left">Sync from Obsidian</button>
               <button data-dir="bidirectional" class="btn-base btn-ghost btn-sm btn-full text-left">Bidirectional sync</button>
             </div>

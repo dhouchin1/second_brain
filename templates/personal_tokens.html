@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal API Tokens · Second Brain</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        /* Ensure smooth scrolling and proper height calculation */
+        .scroll-container {
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+        }
+
+        /* Fix for iOS Safari height issues */
+        @supports (-webkit-touch-callout: none) {
+            .h-screen {
+                height: -webkit-fill-available;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100">
+    <!-- Fixed height container for proper scrolling -->
+    <div class="h-screen overflow-hidden flex flex-col">
+        <div class="flex-1 overflow-y-auto scroll-container">
+            <div class="max-w-4xl mx-auto py-6 px-4 pb-12">
+        <!-- Navigation Notice -->
+        <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mb-6">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h3 class="text-sm font-medium text-blue-200">Settings available in dashboard</h3>
+                    <p class="text-xs text-blue-300 mt-1">For a better experience, access Settings through the sidebar in the main dashboard.</p>
+                </div>
+                <a href="/dashboard/v3" onclick="setTimeout(() => showView('settings'), 100)" class="text-xs text-blue-300 hover:text-blue-200 font-medium">
+                    Go to Dashboard Settings →
+                </a>
+            </div>
+        </div>
+
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-3xl font-semibold text-white">Personal API Tokens</h1>
+                <p class="text-slate-400 mt-2">Create tokens you can use in Apple Shortcuts or other trusted clients without relying on browser cookies.</p>
+            </div>
+            <a href="/dashboard/v3" class="text-sm text-indigo-300 hover:text-indigo-200">← Back to dashboard</a>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-10">
+            <div class="glass-dark bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+                <h2 class="text-xl font-semibold text-white mb-4">Create a new token</h2>
+                <label class="block text-sm text-slate-300 mb-2" for="tokenName">Label (optional)</label>
+                <input id="tokenName" type="text" placeholder="e.g. iPhone Shortcuts" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+
+                <label class="block text-sm text-slate-300 mt-4 mb-2" for="tokenExpiry">Expires in (days, optional)</label>
+                <input id="tokenExpiry" type="number" min="1" placeholder="180" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+
+                <button id="createTokenBtn" class="mt-5 w-full bg-indigo-500 hover:bg-indigo-400 text-white font-medium py-2 rounded-lg transition">Generate Token</button>
+
+                <div id="newTokenContainer" class="hidden mt-6 border border-indigo-500/40 bg-indigo-500/10 rounded-lg p-4">
+                    <h3 class="font-semibold text-indigo-200 mb-2">Token generated</h3>
+                    <p class="text-xs text-indigo-300 mb-3">Copy this value now. For security reasons it will never be shown again.</p>
+                    <div class="flex items-center space-x-2">
+                        <input id="newTokenValue" type="text" readonly class="flex-1 bg-slate-900 border border-indigo-500/40 rounded-lg px-3 py-2 text-sm" />
+                        <button id="copyTokenBtn" class="bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded-lg text-sm">Copy</button>
+                    </div>
+                </div>
+
+                <div id="tokenMessage" class="hidden mt-4 text-sm"></div>
+            </div>
+
+            <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+                <h2 class="text-xl font-semibold text-white mb-4">How to use</h2>
+                <ol class="list-decimal list-inside space-y-3 text-sm text-slate-300">
+                    <li>Generate a token above and copy it.</li>
+                    <li>In the Shortcuts app, edit the “Get Contents of URL” action.</li>
+                    <li>Add header <code class="bg-slate-800 px-1 rounded">Authorization</code> with value <code class="bg-slate-800 px-1 rounded">Bearer &lt;token&gt;</code>.</li>
+                    <li>Update the request URL to match your server (e.g. <code class="bg-slate-800 px-1 rounded">http://localhost:8082/api/shortcuts/voice-note</code>).</li>
+                    <li>Save and test the shortcut from your iPhone/iPad.</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-white">Existing tokens</h2>
+                <button id="refreshTokensBtn" class="text-sm text-indigo-300 hover:text-indigo-200">Refresh</button>
+            </div>
+
+            <div id="noTokensNotice" class="{{ 'hidden' if tokens else '' }} text-sm text-slate-400">
+                No tokens yet. Create one above to get started.
+            </div>
+
+            <div id="tokensTableWrapper" class="{{ '' if tokens else 'hidden' }} overflow-hidden border border-slate-800/60 rounded-lg">
+                <table class="min-w-full divide-y divide-slate-800 text-sm">
+                    <thead class="bg-slate-900/80 text-slate-400 uppercase tracking-widest text-xs">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Label</th>
+                            <th class="px-4 py-3 text-left">Created</th>
+                            <th class="px-4 py-3 text-left">Last Used</th>
+                            <th class="px-4 py-3 text-left">Expires</th>
+                            <th class="px-4 py-3 text-left">Status</th>
+                            <th class="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tokensTableBody" class="divide-y divide-slate-800">
+                        {% for token in tokens %}
+                            <tr data-token-id="{{ token.id }}">
+                                <td class="px-4 py-3">
+                                    <div class="font-medium text-white">{{ token.name or 'Unnamed token' }}</div>
+                                    <div class="text-xs text-slate-400">ID: {{ token.id }}</div>
+                                </td>
+                                <td class="px-4 py-3 text-slate-300">{{ token.created_at or '—' }}</td>
+                                <td class="px-4 py-3 text-slate-300">{{ token.last_used_at or 'Never' }}</td>
+                                <td class="px-4 py-3 text-slate-300">{{ token.expires_at or 'Never' }}</td>
+                                <td class="px-4 py-3">
+                                    {% if token.revoked %}
+                                        <span class="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded-full">Revoked</span>
+                                    {% else %}
+                                        <span class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded-full">Active</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3 text-right">
+                                    {% if not token.revoked %}
+                                        <button class="revokeTokenBtn text-sm text-red-300 hover:text-red-200" data-token-id="{{ token.id }}">Revoke</button>
+                                    {% else %}
+                                        <span class="text-xs text-slate-500">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const createBtn = document.getElementById('createTokenBtn');
+        const refreshBtn = document.getElementById('refreshTokensBtn');
+        const revokeButtons = () => document.querySelectorAll('.revokeTokenBtn');
+        const tokenNameInput = document.getElementById('tokenName');
+        const tokenExpiryInput = document.getElementById('tokenExpiry');
+        const newTokenContainer = document.getElementById('newTokenContainer');
+        const newTokenValue = document.getElementById('newTokenValue');
+        const copyTokenBtn = document.getElementById('copyTokenBtn');
+        const tokenMessage = document.getElementById('tokenMessage');
+        const tokensTableWrapper = document.getElementById('tokensTableWrapper');
+        const noTokensNotice = document.getElementById('noTokensNotice');
+        const tokensTableBody = document.getElementById('tokensTableBody');
+
+        async function createToken() {
+            setMessage('Generating token…', 'info');
+            newTokenContainer.classList.add('hidden');
+
+            try {
+                const payload = {
+                    name: tokenNameInput.value.trim() || null,
+                    expires_in_days: tokenExpiryInput.value ? parseInt(tokenExpiryInput.value, 10) : null,
+                };
+
+                const response = await fetch('/api/auth/personal-tokens', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.detail || data.error || 'Failed to create token');
+                }
+
+                newTokenValue.value = data.token;
+                newTokenContainer.classList.remove('hidden');
+                setMessage('Token created. Copy it now—this is the only time it will be displayed.', 'success');
+                tokenNameInput.value = '';
+                tokenExpiryInput.value = '';
+                await loadTokens();
+                newTokenValue.focus();
+                newTokenValue.select();
+            } catch (err) {
+                console.error(err);
+                setMessage(err.message || 'Unable to create token.', 'error');
+            }
+        }
+
+        async function loadTokens() {
+            try {
+                const response = await fetch('/api/auth/personal-tokens');
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Unable to load tokens');
+                }
+
+                renderTokens(data.tokens || []);
+            } catch (err) {
+                console.error(err);
+                setMessage('Unable to refresh tokens.', 'error');
+            }
+        }
+
+        function renderTokens(tokens) {
+            tokensTableBody.innerHTML = '';
+
+            if (!tokens.length) {
+                tokensTableWrapper.classList.add('hidden');
+                noTokensNotice.classList.remove('hidden');
+                return;
+            }
+
+            noTokensNotice.classList.add('hidden');
+            tokensTableWrapper.classList.remove('hidden');
+
+            tokens.forEach(token => {
+                const tr = document.createElement('tr');
+                tr.dataset.tokenId = token.id;
+                tr.className = 'divide-y divide-slate-800 border-b border-slate-800/60 last:border-0';
+
+                tr.innerHTML = `
+                    <td class="px-4 py-3">
+                        <div class="font-medium text-white">${token.name || 'Unnamed token'}</div>
+                        <div class="text-xs text-slate-400">ID: ${token.id}</div>
+                    </td>
+                    <td class="px-4 py-3 text-slate-300">${token.created_at || '—'}</td>
+                    <td class="px-4 py-3 text-slate-300">${token.last_used_at || 'Never'}</td>
+                    <td class="px-4 py-3 text-slate-300">${token.expires_at || 'Never'}</td>
+                    <td class="px-4 py-3">${token.revoked ?
+                        '<span class="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded-full">Revoked</span>' :
+                        '<span class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded-full">Active</span>'}
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                        ${token.revoked ? '<span class="text-xs text-slate-500">—</span>' : `<button class="revokeTokenBtn text-sm text-red-300 hover:text-red-200" data-token-id="${token.id}">Revoke</button>`}
+                    </td>
+                `;
+
+                tokensTableBody.appendChild(tr);
+            });
+
+            attachRevokeHandlers();
+        }
+
+        function attachRevokeHandlers() {
+            revokeButtons().forEach(btn => {
+                btn.addEventListener('click', async (event) => {
+                    const tokenId = event.currentTarget.dataset.tokenId;
+                    if (!tokenId) return;
+                    const confirmed = confirm('Revoke this token? It will immediately stop working.');
+                    if (!confirmed) return;
+
+                    try {
+                        const response = await fetch(`/api/auth/personal-tokens/${tokenId}`, {
+                            method: 'DELETE',
+                        });
+                        if (!response.ok) {
+                            const data = await response.json().catch(() => ({}));
+                            throw new Error(data.detail || 'Failed to revoke token');
+                        }
+                        setMessage('Token revoked.', 'success');
+                        await loadTokens();
+                    } catch (err) {
+                        console.error(err);
+                        setMessage(err.message || 'Unable to revoke token.', 'error');
+                    }
+                });
+            });
+        }
+
+        function setMessage(text, type = 'info') {
+            if (!text) {
+                tokenMessage.classList.add('hidden');
+                tokenMessage.textContent = '';
+                return;
+            }
+
+            const colors = {
+                info: 'text-slate-300',
+                success: 'text-green-300',
+                error: 'text-red-300',
+            };
+
+            tokenMessage.textContent = text;
+            tokenMessage.className = `mt-4 text-sm ${colors[type] || colors.info}`;
+            tokenMessage.classList.remove('hidden');
+        }
+
+        createBtn.addEventListener('click', createToken);
+        refreshBtn.addEventListener('click', () => loadTokens());
+        attachRevokeHandlers();
+
+        copyTokenBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(newTokenValue.value);
+                setMessage('Token copied to clipboard.', 'success');
+            } catch (err) {
+                console.error(err);
+                setMessage('Copy failed. Select the text and copy manually.', 'error');
+            }
+        });
+    </script>
+</body>
+</html>

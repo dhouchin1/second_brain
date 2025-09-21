@@ -34,6 +34,13 @@
 - **Advanced Filtering** - Search by type, date, tags, and content
 - **Snippet Highlighting** - Contextual result previews with matched terms
 
+### 📦 **Advanced Archival & Knowledge Graph** ⭐ NEW
+- **ArchiveBox Integration** - Full web page archival with multiple format preservation
+- **Graph Memory System** - Automatic fact extraction and knowledge graph construction
+- **Content Intelligence** - Semantic analysis of archived pages with entity recognition
+- **Bulk Operations** - Mass URL archiving with progress tracking and analytics
+- **Preview System** - In-app preview of archived content with download options
+
 ### 🔗 **Seamless Integrations**
 - **Obsidian Sync** - Bi-directional sync with YAML frontmatter support
 - **Discord Bot** - Slash commands for mobile and team note-taking
@@ -357,6 +364,8 @@ Create iOS shortcuts that send data to your Second Brain:
 2. **Web Article Capture** - Share URL → extract content → summarize
 3. **Meeting Prep** - Calendar integration → create pre-meeting note
 4. **Daily Review** - Fetch recent notes → create summary
+
+**Authentication tip:** Open `/settings` while signed in to generate a personal token, then add `Authorization: Bearer <your token>` to each Shortcut's “Get Contents of URL” action so requests work without browser cookies.
 
 ---
 

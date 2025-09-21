@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autom8 Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-healthy { background-color: #4ade80; }
+        .status-warning { background-color: #fbbf24; }
+        .status-error { background-color: #ef4444; }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+        
+        .card {
+            background: #2d2d2d;
+            border-radius: 10px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: 1px solid #404040;
+        }
+        
+        .card h3 {
+            color: #60a5fa;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #404040;
+        }
+        
+        .metric:last-child {
+            border-bottom: none;
+        }
+        
+        .metric-value {
+            font-weight: 600;
+            color: #4ade80;
+        }
+        
+        .metric-value.warning {
+            color: #fbbf24;
+        }
+        
+        .metric-value.error {
+            color: #ef4444;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 1rem;
+        }
+        
+        .events-log {
+            background: #2d2d2d;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .event-item {
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            background: #3a3a3a;
+            border-radius: 5px;
+            border-left: 4px solid #60a5fa;
+        }
+        
+        .event-time {
+            font-size: 0.875rem;
+            color: #a0a0a0;
+        }
+        
+        .event-message {
+            margin-top: 0.25rem;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #2d2d2d;
+            border: 1px solid #404040;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #404040;
+            border-radius: 50%;
+            border-top-color: #60a5fa;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .btn {
+            background: #60a5fa;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            margin: 0.25rem;
+        }
+        
+        .btn:hover {
+            background: #3b82f6;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">
+        <span class="status-indicator status-warning"></span>
+        Connecting...
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>
+                <span class="status-indicator" id="systemStatus"></span>
+                Autom8 Dashboard
+            </h1>
+            <p>Real-time monitoring and analytics for the Autom8 agent system</p>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>System Overview</h3>
+                <div class="metric">
+                    <span>Status</span>
+                    <span class="metric-value" id="overallStatus">Loading...</span>
+                </div>
+                <div class="metric">
+                    <span>Uptime</span>
+                    <span class="metric-value" id="uptime">-</span>
+                </div>
+                <div class="metric">
+                    <span>Redis Connected</span>
+                    <span class="metric-value" id="redisStatus">-</span>
+                </div>
+                <div class="metric">
+                    <span>Active Agents</span>
+                    <span class="metric-value" id="activeAgents">-</span>
+                </div>
+                <div class="metric">
+                    <span>Total Events</span>
+                    <span class="metric-value" id="totalEvents">-</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Agent Status</h3>
+                <div class="metric">
+                    <span>Total Agents</span>
+                    <span class="metric-value" id="totalAgents">-</span>
+                </div>
+                <div class="metric">
+                    <span>Active</span>
+                    <span class="metric-value" id="agentsActive">-</span>
+                </div>
+                <div class="metric">
+                    <span>Idle</span>
+                    <span class="metric-value" id="agentsIdle">-</span>
+                </div>
+                <button class="btn" onclick="refreshAgents()">Refresh Agents</button>
+            </div>
+
+            <div class="card">
+                <h3>Model Performance</h3>
+                <div class="metric">
+                    <span>Total Requests</span>
+                    <span class="metric-value" id="totalRequests">-</span>
+                </div>
+                <div class="metric">
+                    <span>Preferred Model</span>
+                    <span class="metric-value" id="preferredModel">-</span>
+                </div>
+                <div class="metric">
+                    <span>Total Cost</span>
+                    <span class="metric-value" id="totalCost">$-</span>
+                </div>
+                <button class="btn" onclick="refreshModels()">Refresh Models</button>
+            </div>
+
+            <div class="card">
+                <h3>Complexity Analysis</h3>
+                <div class="metric">
+                    <span>Total Analyses</span>
+                    <span class="metric-value" id="totalAnalyses">-</span>
+                </div>
+                <div class="metric">
+                    <span>Avg Complexity</span>
+                    <span class="metric-value" id="avgComplexity">-</span>
+                </div>
+                <button class="btn" onclick="refreshComplexity()">Refresh Stats</button>
+            </div>
+
+            <div class="card">
+                <h3>Routing Statistics</h3>
+                <div class="metric">
+                    <span>Total Routes</span>
+                    <span class="metric-value" id="totalRoutes">-</span>
+                </div>
+                <div class="metric">
+                    <span>Local Routes</span>
+                    <span class="metric-value" id="localRoutes">-</span>
+                </div>
+                <div class="metric">
+                    <span>Cloud Routes</span>
+                    <span class="metric-value" id="cloudRoutes">-</span>
+                </div>
+                <div class="metric">
+                    <span>Accuracy</span>
+                    <span class="metric-value" id="routingAccuracy">-%</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Context Optimization</h3>
+                <div class="metric">
+                    <span>Total Contexts</span>
+                    <span class="metric-value" id="totalContexts">-</span>
+                </div>
+                <div class="metric">
+                    <span>Avg Size</span>
+                    <span class="metric-value" id="avgContextSize">- tokens</span>
+                </div>
+                <div class="metric">
+                    <span>Cache Hit Rate</span>
+                    <span class="metric-value" id="cacheHitRate">-%</span>
+                </div>
+                <div class="metric">
+                    <span>Memory Efficiency</span>
+                    <span class="metric-value" id="memoryEfficiency">-%</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>System Metrics Trend</h3>
+                <div class="chart-container">
+                    <canvas id="metricsChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Model Distribution</h3>
+                <div class="chart-container">
+                    <canvas id="modelsChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="events-log">
+            <h3>Recent Events <button class="btn" onclick="toggleEventStream()">Toggle Stream</button></h3>
+            <div id="eventsContainer">
+                <div class="event-item">
+                    <div class="event-time">Connecting to event stream...</div>
+                    <div class="event-message">Waiting for real-time events...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let metricsSocket = null;
+        let eventsSocket = null;
+        let eventStreamActive = false;
+        let metricsChart = null;
+        let modelsChart = null;
+        const maxEvents = 50;
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeCharts();
+            connectWebSockets();
+            loadInitialData();
+            
+            // Auto-refresh data every 30 seconds
+            setInterval(loadInitialData, 30000);
+        });
+
+        function initializeCharts() {
+            // Metrics trend chart
+            const metricsCtx = document.getElementById('metricsChart').getContext('2d');
+            metricsChart = new Chart(metricsCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Active Agents',
+                        data: [],
+                        borderColor: '#60a5fa',
+                        backgroundColor: 'rgba(96, 165, 250, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'Events/min',
+                        data: [],
+                        borderColor: '#4ade80',
+                        backgroundColor: 'rgba(74, 222, 128, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#e0e0e0' } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#a0a0a0' }, grid: { color: '#404040' } },
+                        y: { ticks: { color: '#a0a0a0' }, grid: { color: '#404040' } }
+                    }
+                }
+            });
+
+            // Models distribution chart
+            const modelsCtx = document.getElementById('modelsChart').getContext('2d');
+            modelsChart = new Chart(modelsCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        backgroundColor: ['#60a5fa', '#4ade80', '#fbbf24', '#ef4444', '#a78bfa']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#e0e0e0' } }
+                    }
+                }
+            });
+        }
+
+        function connectWebSockets() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+
+            // Connect to metrics WebSocket
+            metricsSocket = new WebSocket(`${protocol}//${host}/ws/metrics`);
+            
+            metricsSocket.onopen = function() {
+                updateConnectionStatus('metrics', true);
+            };
+            
+            metricsSocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                updateSystemMetrics(data.system_status);
+            };
+            
+            metricsSocket.onclose = function() {
+                updateConnectionStatus('metrics', false);
+                // Reconnect after 5 seconds
+                setTimeout(() => connectWebSockets(), 5000);
+            };
+
+            metricsSocket.onerror = function(error) {
+                console.error('Metrics WebSocket error:', error);
+                updateConnectionStatus('metrics', false);
+            };
+
+            // Connect to events WebSocket
+            eventsSocket = new WebSocket(`${protocol}//${host}/ws/events`);
+            
+            eventsSocket.onopen = function() {
+                updateConnectionStatus('events', true);
+                eventStreamActive = true;
+            };
+            
+            eventsSocket.onmessage = function(event) {
+                if (eventStreamActive) {
+                    const data = JSON.parse(event.data);
+                    addEventToLog(data);
+                }
+            };
+            
+            eventsSocket.onclose = function() {
+                updateConnectionStatus('events', false);
+                eventStreamActive = false;
+            };
+
+            eventsSocket.onerror = function(error) {
+                console.error('Events WebSocket error:', error);
+                updateConnectionStatus('events', false);
+            };
+        }
+
+        function updateConnectionStatus(type, connected) {
+            const statusEl = document.getElementById('connectionStatus');
+            if (connected) {
+                statusEl.innerHTML = '<span class="status-indicator status-healthy"></span>Connected';
+            } else {
+                statusEl.innerHTML = '<span class="status-indicator status-error"></span>Disconnected';
+            }
+        }
+
+        async function loadInitialData() {
+            try {
+                // Load system status
+                const systemResponse = await fetch('/api/system/status');
+                const systemData = await systemResponse.json();
+                updateSystemMetrics(systemData);
+
+                // Load other data
+                await Promise.all([
+                    refreshAgents(),
+                    refreshModels(),
+                    refreshComplexity(),
+                    refreshRouting(),
+                    refreshContext()
+                ]);
+
+            } catch (error) {
+                console.error('Error loading initial data:', error);
+            }
+        }
+
+        function updateSystemMetrics(data) {
+            document.getElementById('overallStatus').textContent = data.status;
+            document.getElementById('overallStatus').className = 
+                'metric-value ' + (data.status === 'healthy' ? '' : 'warning');
+            
+            document.getElementById('systemStatus').className = 
+                'status-indicator ' + (data.status === 'healthy' ? 'status-healthy' : 'status-warning');
+            
+            document.getElementById('uptime').textContent = formatDuration(data.uptime);
+            document.getElementById('redisStatus').textContent = data.redis_connected ? 'Yes' : 'No';
+            document.getElementById('redisStatus').className = 
+                'metric-value ' + (data.redis_connected ? '' : 'error');
+            
+            document.getElementById('activeAgents').textContent = data.active_agents;
+            document.getElementById('totalEvents').textContent = data.total_events.toLocaleString();
+
+            // Update chart with mock trend data
+            updateMetricsChart(data);
+        }
+
+        function updateMetricsChart(data) {
+            const now = new Date();
+            const labels = metricsChart.data.labels;
+            const agentData = metricsChart.data.datasets[0].data;
+            const eventData = metricsChart.data.datasets[1].data;
+
+            // Add new data point
+            labels.push(now.toLocaleTimeString());
+            agentData.push(data.active_agents);
+            eventData.push(Math.floor(Math.random() * 20) + 10); // Mock events per minute
+
+            // Keep only last 20 data points
+            if (labels.length > 20) {
+                labels.shift();
+                agentData.shift();
+                eventData.shift();
+            }
+
+            metricsChart.update();
+        }
+
+        async function refreshAgents() {
+            try {
+                const response = await fetch('/api/agents/list');
+                const data = await response.json();
+                
+                document.getElementById('totalAgents').textContent = data.total_count;
+                document.getElementById('agentsActive').textContent = data.active_count;
+                document.getElementById('agentsIdle').textContent = data.idle_count;
+            } catch (error) {
+                console.error('Error refreshing agents:', error);
+            }
+        }
+
+        async function refreshModels() {
+            try {
+                const response = await fetch('/api/models/status');
+                const data = await response.json();
+                
+                document.getElementById('totalRequests').textContent = data.total_requests.toLocaleString();
+                document.getElementById('preferredModel').textContent = data.preferred_model || 'None';
+                document.getElementById('totalCost').textContent = '$' + data.total_cost.toFixed(4);
+
+                // Update models chart
+                if (data.models && data.models.length > 0) {
+                    const labels = data.models.map(m => m.name);
+                    const chartData = data.models.map(m => m.requests_count);
+                    
+                    modelsChart.data.labels = labels;
+                    modelsChart.data.datasets[0].data = chartData;
+                    modelsChart.update();
+                }
+            } catch (error) {
+                console.error('Error refreshing models:', error);
+            }
+        }
+
+        async function refreshComplexity() {
+            try {
+                const response = await fetch('/api/complexity/stats');
+                const data = await response.json();
+                
+                document.getElementById('totalAnalyses').textContent = data.total_analyses.toLocaleString();
+                document.getElementById('avgComplexity').textContent = data.avg_complexity_score.toFixed(2);
+            } catch (error) {
+                console.error('Error refreshing complexity:', error);
+            }
+        }
+
+        async function refreshRouting() {
+            try {
+                const response = await fetch('/api/routing/stats');
+                const data = await response.json();
+                
+                document.getElementById('totalRoutes').textContent = data.total_routes.toLocaleString();
+                document.getElementById('localRoutes').textContent = data.local_routes.toLocaleString();
+                document.getElementById('cloudRoutes').textContent = data.cloud_routes.toLocaleString();
+                document.getElementById('routingAccuracy').textContent = data.routing_accuracy.toFixed(1) + '%';
+            } catch (error) {
+                console.error('Error refreshing routing:', error);
+            }
+        }
+
+        async function refreshContext() {
+            try {
+                const response = await fetch('/api/context/stats');
+                const data = await response.json();
+                
+                document.getElementById('totalContexts').textContent = data.total_contexts.toLocaleString();
+                document.getElementById('avgContextSize').textContent = data.avg_context_size.toFixed(0) + ' tokens';
+                document.getElementById('cacheHitRate').textContent = data.cache_hit_rate.toFixed(1) + '%';
+                document.getElementById('memoryEfficiency').textContent = data.memory_efficiency.toFixed(1) + '%';
+            } catch (error) {
+                console.error('Error refreshing context:', error);
+            }
+        }
+
+        function addEventToLog(eventData) {
+            const container = document.getElementById('eventsContainer');
+            
+            const eventEl = document.createElement('div');
+            eventEl.className = 'event-item';
+            
+            const time = new Date().toLocaleTimeString();
+            const message = eventData.data?.summary || 'Event received';
+            
+            eventEl.innerHTML = `
+                <div class="event-time">${time} - ${eventData.type}</div>
+                <div class="event-message">${message}</div>
+            `;
+            
+            container.insertBefore(eventEl, container.firstChild);
+            
+            // Keep only the most recent events
+            while (container.children.length > maxEvents) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        function toggleEventStream() {
+            eventStreamActive = !eventStreamActive;
+            const button = event.target;
+            button.textContent = eventStreamActive ? 'Stop Stream' : 'Start Stream';
+            button.style.backgroundColor = eventStreamActive ? '#ef4444' : '#60a5fa';
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes}m ${secs}s`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+    </script>
+</body>
+</html>

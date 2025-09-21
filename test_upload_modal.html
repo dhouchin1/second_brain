@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Upload Modal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900">
+    <div class="p-8">
+        <h1 class="text-white text-2xl mb-4">Upload Modal Test</h1>
+        <button onclick="showUploadModal()" class="bg-blue-600 text-white px-4 py-2 rounded">
+            Test Upload Modal
+        </button>
+    </div>
+
+    <!-- Upload Files Modal -->
+    <div id="uploadModal" class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-large">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold text-white flex items-center">
+                    Upload Files
+                </h2>
+                <button onclick="hideUploadModal()" class="text-slate-400 hover:text-white transition-colors">
+                    ✕
+                </button>
+            </div>
+
+            <!-- Upload Interface -->
+            <div class="space-y-6">
+                <!-- File Input Area -->
+                <div id="uploadDropZone" class="border-2 border-dashed border-slate-600 rounded-xl p-8 text-center transition-colors hover:border-blue-400 hover:bg-blue-400 hover:bg-opacity-5">
+                    <input type="file" id="fileInput" class="hidden" multiple accept="audio/*,image/*,video/*,.pdf,.txt,.md,.doc,.docx">
+                    <div class="space-y-4">
+                        <div class="w-16 h-16 bg-blue-500 bg-opacity-20 rounded-full flex items-center justify-center mx-auto">
+                            📁
+                        </div>
+                        <div>
+                            <h3 class="text-white font-medium mb-2">Drop files here or click to browse</h3>
+                            <p class="text-slate-400 text-sm">Supports audio, images, videos, PDFs, and text files</p>
+                        </div>
+                        <button onclick="document.getElementById('fileInput').click()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors">
+                            Choose Files
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex space-x-4">
+                    <button onclick="alert('Upload would happen here')" class="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-6 py-3 rounded-xl font-medium transition-all duration-200">
+                        Upload Files
+                    </button>
+                    <button onclick="hideUploadModal()" class="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-medium transition-colors">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showUploadModal() {
+            document.getElementById('uploadModal').classList.remove('hidden');
+        }
+
+        function hideUploadModal() {
+            document.getElementById('uploadModal').classList.add('hidden');
+        }
+
+        // Basic drag and drop
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropZone = document.getElementById('uploadDropZone');
+            const fileInput = document.getElementById('fileInput');
+
+            fileInput.addEventListener('change', function(e) {
+                const files = Array.from(e.target.files);
+                console.log('Files selected:', files.map(f => f.name));
+                alert(`Selected ${files.length} file(s): ${files.map(f => f.name).join(', ')}`);
+            });
+
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            dropZone.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                this.classList.add('border-blue-400', 'bg-blue-400', 'bg-opacity-10');
+            });
+
+            dropZone.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                this.classList.remove('border-blue-400', 'bg-blue-400', 'bg-opacity-10');
+            });
+
+            dropZone.addEventListener('drop', function(e) {
+                e.preventDefault();
+                this.classList.remove('border-blue-400', 'bg-blue-400', 'bg-opacity-10');
+
+                const files = Array.from(e.dataTransfer.files);
+                console.log('Files dropped:', files.map(f => f.name));
+                alert(`Dropped ${files.length} file(s): ${files.map(f => f.name).join(', ')}`);
+            });
+        });
+    </script>
+</body>
+</html>

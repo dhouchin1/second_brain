@@ -1,0 +1,130 @@
+# ArchiveBox Integration for Second Brain
+# Development Docker Compose for ArchiveBox service integration
+
+version: '3.8'
+
+services:
+  # ArchiveBox service for web archival
+  archivebox:
+    image: archivebox/archivebox:latest
+    container_name: secondbrain-archivebox
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"  # ArchiveBox web UI (local access only)
+    volumes:
+      # ArchiveBox data directory
+      - ./archivebox_data:/data
+      # Shared volume for Second Brain integration
+      - archivebox_shared:/shared
+      # Configuration
+      - ./deploy/config/archivebox.conf:/etc/archivebox/archivebox.conf:ro
+    environment:
+      # ArchiveBox core settings
+      - ARCHIVEBOX_USER=archivebox
+      - ARCHIVEBOX_PASSWORD=${ARCHIVEBOX_PASSWORD:-admin123}
+
+      # Archive extraction settings
+      - SAVE_TITLE=True
+      - SAVE_FAVICON=True
+      - SAVE_WGET=True
+      - SAVE_PDF=True
+      - SAVE_SCREENSHOT=True
+      - SAVE_DOM=True
+      - SAVE_SINGLEFILE=True
+      - SAVE_READABILITY=True
+      - SAVE_MERCURY=False
+      - SAVE_HTMLTOTEXT=True
+      - SAVE_GIT=False
+      - SAVE_MEDIA=False
+      - SAVE_ARCHIVE_DOT_ORG=True
+
+      # Browser settings
+      - USE_CHROME=True
+      - CHROME_BINARY=/usr/bin/chromium-browser
+      - RESOLUTION=1440,2000
+      - CHECK_SSL_VALIDITY=True
+      - TIMEOUT=60
+      - MEDIA_TIMEOUT=120
+
+      # Performance settings
+      - ONLY_NEW=True
+      - OVERWRITE=False
+      - EXTRACTORS_MAX_CONCURRENCY=2
+
+      # Storage settings
+      - OUTPUT_PERMISSIONS=755
+      - RESTRICT_FILE_NAMES=True
+
+      # Security settings
+      - ALLOWED_HOSTS=*
+      - SECRET_KEY=${ARCHIVEBOX_SECRET_KEY:-changeme-in-production}
+
+      # Logging
+      - LOG_LEVEL=WARNING
+      - DEBUG=False
+    networks:
+      - archivebox_network
+    healthcheck:
+      test: ["CMD", "archivebox", "status"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # Redis for ArchiveBox task queue (optional, can share with main Redis)
+  archivebox-redis:
+    image: redis:7-alpine
+    container_name: secondbrain-archivebox-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - archivebox_redis_data:/data
+    ports:
+      - "127.0.0.1:6380:6379"  # Different port to avoid conflicts
+    networks:
+      - archivebox_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+# Named volumes for persistent data
+volumes:
+  archivebox_shared:
+    driver: local
+  archivebox_redis_data:
+    driver: local
+
+# Network for ArchiveBox services
+networks:
+  archivebox_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+# For integration with main application, use:
+# networks:
+#   default:
+#     external:
+#       name: secondbrain_secondbrain_network

@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar styles - Dashboard v3 theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-250;
+}
+
+/* Firefox scrollbar styles */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #283542 #16202b;
+}
+
+/* Base styles - Dashboard v3 theme */
+.App {
+  @apply text-slate-800 bg-slate-25;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseSoft {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-pulse-soft {
+  animation: pulseSoft 2s ease-in-out infinite;
+}
+
+/* Loading spinner */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Chart container styles */
+.chart-container {
+  position: relative;
+  height: 300px;
+  width: 100%;
+}
+
+/* Focus styles for accessibility - Dashboard v3 theme */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  @apply outline-none ring-2 ring-discord-500 ring-offset-2 ring-offset-slate-25;
+}
+
+/* Custom styles for form elements - Dashboard v3 theme */
+input[type="checkbox"] {
+  @apply text-discord-600 bg-slate-200 border-slate-300 rounded focus:ring-discord-500 focus:ring-2;
+}
+
+/* Backdrop blur fallback - Dashboard v3 theme */
+.backdrop-blur-sm {
+  backdrop-filter: blur(4px);
+}
+
+@supports not (backdrop-filter: blur(4px)) {
+  .backdrop-blur-sm {
+    @apply bg-slate-100/90;
+  }
+}
+
+/* Gradient text - Dashboard v3 theme */
+.gradient-text {
+  background: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card hover effects - Dashboard v3 theme */
+.card-hover {
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(99, 102, 241, 0.15);
+}
+
+/* Status indicators - Dashboard v3 theme */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+.status-dot.online {
+  @apply bg-notion-500;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2), 0 0 10px rgba(34, 197, 94, 0.4);
+  animation: pulseSoft 2s ease-in-out infinite;
+}
+
+.status-dot.offline {
+  @apply bg-red-400;
+}
+
+.status-dot.warning {
+  @apply bg-yellow-400;
+}
+
+/* Navigation active state - Dashboard v3 theme */
+.nav-link-active {
+  @apply bg-discord-500/20 text-discord-400;
+  border-left: 2px solid theme('colors.discord.400');
+  padding-left: calc(theme('spacing.3') - 2px);
+}
+
+/* Table styles - Dashboard v3 theme */
+.table-hover-row:hover {
+  @apply bg-slate-200/50;
+}
+
+/* Tooltip styles - Dashboard v3 theme */
+.tooltip {
+  @apply absolute z-50 px-2 py-1 text-xs text-white bg-slate-100 rounded shadow-lg;
+  pointer-events: none;
+}
+
+/* Progress bar - Dashboard v3 theme */
+.progress-bar {
+  @apply h-2 bg-slate-300 rounded-full overflow-hidden;
+}
+
+.progress-bar-fill {
+  @apply h-full bg-discord-500 transition-all duration-300 ease-out;
+}
+
+/* Badge styles - Dashboard v3 theme */
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-notion-500/20 text-notion-400;
+}
+
+.badge-warning {
+  @apply bg-yellow-500/20 text-yellow-400;
+}
+
+.badge-error {
+  @apply bg-red-500/20 text-red-400;
+}
+
+.badge-info {
+  @apply bg-discord-500/20 text-discord-400;
+}
+
+/* Responsive breakpoints adjustments */
+@media (max-width: 640px) {
+  .mobile-stack {
+    @apply flex-col;
+  }
+  
+  .mobile-full-width {
+    @apply w-full;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-break-before {
+    page-break-before: always;
+  }
+  
+  .print-break-after {
+    page-break-after: always;
+  }
+}

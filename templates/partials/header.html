@@ -1,13 +1,70 @@
-<header class="w-full bg-gray-900/60 backdrop-blur border-b border-gray-800 text-blue-100">
-  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-    <a href="/" class="flex items-center gap-2 font-semibold">
-      <img src="/static/brain-logo.svg" alt="Second Brain" class="h-6 w-6"/>
-      <span>Second Brain</span>
+{% set path = request.url.path %}
+{% set active_user = user or current_user %}
+<header class="app-header">
+  <div class="app-header__inner">
+    <a href="/" class="app-brand" aria-label="Second Brain home">
+      <span class="app-brand__logo">🧠</span>
+      <span class="app-brand__name">
+        <span class="app-brand__title">Second Brain</span>
+        <span class="app-brand__subtitle">Knowledge OS</span>
+      </span>
     </a>
-    <nav class="flex items-center gap-4 text-sm">
-      {% set path = request.url.path %}
-      <a href="/" class="hover:underline {% if path == '/' %}underline font-semibold text-pink-200{% endif %}">Dashboard</a>
-      <a href="/search" class="hover:underline {% if path.startswith('/search') %}underline font-semibold text-pink-200{% endif %}">Advanced Search</a>
+
+    <nav class="app-nav" aria-label="Primary">
+      {% set nav_links = [
+        {'label': 'Dashboard', 'href': '/', 'match': ['/', '/dashboard', '/dashboard/legacy']},
+        {'label': 'Capture', 'href': '/capture/enhanced', 'match': ['/capture']},
+        {'label': 'Search', 'href': '/search', 'match': ['/search']},
+        {'label': 'Analytics', 'href': '/analytics', 'match': ['/analytics']}
+      ] %}
+      {% for item in nav_links %}
+        {% set ns = namespace(is_active=false) %}
+        {% for prefix in item.match %}
+          {% if path == prefix or (prefix != '/' and path.startswith(prefix)) %}
+            {% set ns.is_active = true %}
+          {% endif %}
+        {% endfor %}
+        <a href="{{ item.href }}" class="app-nav__link{% if ns.is_active %} is-active{% endif %}">
+          {{ item.label }}
+        </a>
+      {% endfor %}
     </nav>
+
+    <div class="app-header__spacer"></div>
+
+    <div class="app-header__actions">
+      <span class="app-pill app-action--hide-mobile">
+        <span class="app-user__status-dot" aria-hidden="true"></span>
+        AI Enhanced
+      </span>
+      <a href="/capture/enhanced" class="app-action app-action--primary" aria-label="Open capture workspace">
+        <span aria-hidden="true">＋</span>
+        New Capture
+      </a>
+      <a href="/dashboard/v3" class="app-action app-action--hide-mobile" aria-label="View modern dashboard">
+        Dashboard v3
+      </a>
+
+      {% if active_user %}
+        <div class="app-user" title="Signed in as {{ active_user.username or active_user.email }}">
+          <span class="app-user__avatar">{{ (active_user.username or active_user.email or 'U')[0]|upper }}</span>
+          <span class="app-user__meta">
+            <span class="app-user__name">{{ active_user.username or active_user.email }}</span>
+            <span class="app-user__status">
+              <span class="app-user__status-dot" aria-hidden="true"></span>
+              Online
+            </span>
+          </span>
+        </div>
+        <form method="post" action="/logout" class="logout-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button type="submit" class="app-action app-action--hide-mobile" aria-label="Log out">
+            Log out
+          </button>
+        </form>
+      {% else %}
+        <a href="/login" class="app-action">Sign in</a>
+      {% endif %}
+    </div>
   </div>
 </header>

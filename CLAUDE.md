@@ -11,12 +11,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 Second Brain is a comprehensive knowledge management system combining multi-modal input capture, AI-powered processing, and intelligent retrieval. It integrates tightly with Obsidian vaults, Discord bots, and Apple Shortcuts for seamless cross-platform note-taking and search.
 
-## Current Development Status (2025-09-18)
-**Phase:** ✅ Frontend v3 Complete - Production-ready mobile-first PWA
-**Backend:** ✅ Robust API layer with 70+ services and comprehensive capture system
-**Frontend:** ✅ Dashboard v3 fully functional with enterprise-grade mobile interface
-**Stability:** ✅ Core systems stable, SSE real-time updates, comprehensive PWA
-**Status:** Ready for production deployment with minor optimizations pending
+## Current Development Status (2025-09-20)
+**Phase:** ✅ ArchiveBox + Graph Memory Integration Complete - Enterprise Knowledge Management System
+**Backend:** ✅ Advanced multi-modal capture with intelligent archival and fact extraction
+**Frontend:** ✅ Dashboard v3 with ArchiveBox management and Graph Memory visualization
+**Knowledge System:** ✅ Automated knowledge graph construction from archived content
+**Status:** Production-ready enterprise system with AI-powered content intelligence
+
+## 🆕 Recent Major Features (2025-09-20)
+
+### ArchiveBox Integration (Phase 5+ Complete)
+- **Full Web Archival**: Complete ArchiveBox integration with HTML, PDF, screenshot preservation
+- **Background Worker System**: Asynchronous job processing with queue management
+- **Bulk Operations**: Multi-URL archiving with progress tracking (up to 100 URLs)
+- **Content Preview**: Modal-based preview system with download capabilities
+- **Advanced Analytics**: Real-time metrics dashboard with domain analysis
+- **Smart URL Detection**: Automatic archiving from note content with filtering
+- **Status Tracking**: Live job monitoring with auto-refresh functionality
+
+### Graph Memory System (Phase 6+ Complete)
+- **Knowledge Graph Database**: Fact extraction and relationship storage (`gm_*` tables)
+- **Automatic Fact Extraction**: AI-powered analysis of archived content for structured facts
+- **Entity Recognition**: Subject-predicate-object relationship identification
+- **Frontend Visualization**: Graph Memory dashboard showing facts, sources, and entities
+- **Integration Pipeline**: Seamless fact extraction from ArchiveBox → Graph Memory workflow
+- **Confidence Scoring**: Fact reliability scoring and temporal validity tracking
+
+### Technical Architecture Enhanced
+```
+Note Creation → URL Detection → ArchiveBox Worker → Content Archival →
+Fact Extraction → Graph Memory Storage → Knowledge Graph Visualization
+```
 
 ## ⚠️ Frontend Milestone Pending
 
@@ -133,6 +158,10 @@ python -c "from services.vault_seeding_service import get_seeding_service; from 
 
 # Search indexing operations
 python -c "from services.search_index import SearchIndexer; indexer = SearchIndexer(); indexer.rebuild_all(embeddings=True)"
+
+# ArchiveBox and Graph Memory operations
+python -c "from graph_memory.service import get_graph_memory_service; service = get_graph_memory_service(); print('Graph Memory enabled:', service.extractor is not None)"
+sqlite3 notes.db < db/migrations/016_graph_memory.sql  # Apply graph memory migration
 
 # Discord bot setup
 python setup_discord_bot.py            # Configure Discord bot

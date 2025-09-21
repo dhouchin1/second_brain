@@ -19,6 +19,7 @@ from config import settings
 from file_processor import FileProcessor
 from llm_utils import ollama_summarize
 from services.realtime_events import notify_note_update, schedule_note_update
+from services.ingestion_queue import ingestion_queue, IngestionJobType
 
 
 # --- Data Models ---
@@ -87,7 +88,10 @@ class WebhookService:
             
             # Save the file
             file_path, stored_filename = processor.save_file(file_content, file_info)
-            
+            file_hash = processor._compute_sha256(file_path)
+            file_info = dict(file_info)
+            file_info["content_hash"] = file_hash
+
             # Create note in database quickly
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             conn = self.get_conn()
@@ -98,9 +102,10 @@ class WebhookService:
                 """
                 INSERT INTO notes (
                     title, body, content, summary, tags, actions, type, timestamp,
-                    audio_filename, file_filename, file_type, file_mime_type, 
-                    file_size, extracted_text, file_metadata, status, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    audio_filename, file_filename, file_type, file_mime_type,
+                    file_size, extracted_text, file_metadata, status, user_id,
+                    content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "Incoming Audio",  # Will be updated after processing
@@ -113,13 +118,14 @@ class WebhookService:
                     now,
                     stored_filename,
                     stored_filename,
-                    "audio", 
+                    "audio",
                     file.content_type,
                     len(file_content),
                     "",
                     json.dumps(file_info, default=str) if file_info else None,
                     "pending",
                     user_id,
+                    file_hash,
                 ),
             )
             
@@ -137,6 +143,16 @@ class WebhookService:
             # FTS triggers handle indexing; no manual insert
             conn.commit()
 
+            job = ingestion_queue.enqueue(
+                IngestionJobType.AUDIO_TRANSCRIPTION,
+                note_id=note_id,
+                user_id=user_id,
+                payload={"stored_filename": stored_filename},
+                priority=1,
+                content_hash=file_hash,
+            )
+            note_payload["ingestion_job_key"] = job.job_key
+
             # Add to FIFO processing queue
             from services.audio_queue import audio_queue
             audio_queue.add_to_queue(note_id, user_id)
@@ -144,6 +160,9 @@ class WebhookService:
             # Start batch timer if batch mode is enabled
             if settings.batch_mode_enabled:
                 audio_queue.start_batch_timer()
+
+            from tasks import process_ingestion_queue
+            background_tasks.add_task(process_ingestion_queue)
 
             # Broadcast realtime update
             await notify_note_update(user_id, "created", note_payload)
@@ -154,7 +173,8 @@ class WebhookService:
                 "status": "queued",
                 "message": "Audio uploaded successfully and queued for processing",
                 "filename": stored_filename,
-                "queue_position": "pending"
+                "queue_position": "pending",
+                "ingestion_job": job.to_api(),
             }
             
         except Exception as e:

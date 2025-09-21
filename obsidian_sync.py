@@ -9,15 +9,19 @@ fallback, so a hard dependency on `python-frontmatter` is not required.
 import os
 # Note: yaml handled via obsidian_common helpers when needed
 import shutil
+import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 import hashlib
 import time
 from config import settings
 from obsidian_common import sanitize_filename, dump_frontmatter_file, load_frontmatter_file
+from graph_memory.service import get_graph_memory_service
 import json
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SyncState:
@@ -47,6 +51,60 @@ class ObsidianSync:
         (self.vault_path / ".secondbrain").mkdir(parents=True, exist_ok=True)
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.attachments_dir.mkdir(parents=True, exist_ok=True)
+
+    def _record_graph_memory(
+        self,
+        *,
+        note_id: int,
+        content: str,
+        metadata: Any,
+        filepath: Path,
+    ) -> None:
+        if not settings.graph_memory_enabled or not settings.graph_memory_extract_obsidian:
+            return
+
+        if not content:
+            return
+
+        graph_service = get_graph_memory_service()
+        try:
+            checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        except Exception:
+            checksum = None
+
+        try:
+            relative_path = str(filepath.relative_to(self.vault_path))
+        except Exception:
+            relative_path = str(filepath)
+
+        base_metadata = metadata if isinstance(metadata, dict) else {}
+
+        graph_metadata = self._normalise_metadata({
+            "frontmatter": base_metadata,
+            "note_id": note_id,
+            "vault": str(self.vault_path),
+            "path": relative_path,
+        })
+
+        try:
+            graph_service.ingest_text(
+                text=content,
+                title=base_metadata.get("title"),
+                source_type="obsidian",
+                uri=relative_path,
+                checksum=checksum,
+                path=relative_path,
+                mime="text/markdown",
+                metadata=graph_metadata,
+            )
+        except Exception:
+            logger.exception("Graph memory ingestion failed for Obsidian note %s", note_id)
+
+    def _normalise_metadata(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return json.loads(json.dumps(data, default=str))
+        except Exception:
+            return {"raw": str(data)}
     
     def export_note_to_obsidian(self, note_id: int) -> Path:
         """Export a single note to Obsidian vault"""
@@ -219,7 +277,17 @@ class ObsidianSync:
             
             conn.commit()
             conn.close()
-            
+
+            try:
+                self._record_graph_memory(
+                    note_id=note_id,
+                    content=content,
+                    metadata=metadata,
+                    filepath=filepath,
+                )
+            except Exception:
+                logger.exception("Graph memory ingestion failed during Obsidian import")
+
             return note_id
             
         except Exception as e:

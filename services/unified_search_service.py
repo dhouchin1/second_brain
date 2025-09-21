@@ -14,7 +14,11 @@ from enum import Enum
 from datetime import datetime
 
 from services.search_adapter import SearchService
-from services.smart_templates_service import SmartTemplatesService
+
+try:
+    from services.smart_templates_service import SmartTemplatesService  # type: ignore
+except ImportError:  # pragma: no cover
+    SmartTemplatesService = None
 
 
 class UnifiedResultType(str, Enum):
@@ -58,7 +62,7 @@ class UnifiedSearchService:
         
         # Initialize search services
         self.search_service = SearchService(db_path=db_path, vec_ext_path=vec_ext_path)
-        self.templates_service = SmartTemplatesService(get_conn_func)
+        self.templates_service = SmartTemplatesService(get_conn_func) if SmartTemplatesService else None
         
         # Cache for recent searches and suggestions
         self._suggestion_cache = {}
@@ -100,7 +104,7 @@ class UnifiedSearchService:
         
         # Get template suggestions if enabled
         template_suggestions = []
-        if include_templates:
+        if include_templates and self.templates_service:
             template_suggestions = await self._get_template_suggestions(
                 query, context, intent
             )
@@ -152,9 +156,9 @@ class UnifiedSearchService:
                 unified_result = UnifiedSearchResult(
                     id=f"note_{result.get('id', 'unknown')}",
                     type=UnifiedResultType.NOTE,
-                    title=result.get('title', 'Untitled Note'),
-                    content=result.get('content', '')[:300] + "..." if result.get('content', '') else '',
-                    description=result.get('summary', '')[:150] + "..." if result.get('summary', '') else '',
+                    title=result.get('title') or 'Untitled Note',
+                    content=self._build_content_preview(result, query),
+                    description=self._build_description(result),
                     relevance_score=result.get('score', 0.0),
                     source="notes",
                     metadata={
@@ -163,13 +167,10 @@ class UnifiedSearchService:
                         "modified_at": result.get('modified_at'),
                         "tags": result.get('tags', '').split(',') if result.get('tags') else [],
                         "type": result.get('type', 'text'),
-                        "file_path": result.get('file_path')
+                        "file_path": result.get('file_filename'),
+                        "audio_filename": result.get('audio_filename')
                     },
-                    quick_actions=[
-                        {"action": "open", "label": "Open Note", "icon": "📖"},
-                        {"action": "edit", "label": "Edit", "icon": "✏️"},
-                        {"action": "share", "label": "Share", "icon": "🔗"}
-                    ]
+                    quick_actions=self._note_quick_actions(result)
                 )
                 unified_results.append(unified_result)
             
@@ -178,6 +179,60 @@ class UnifiedSearchService:
         except Exception as e:
             print(f"Error searching notes: {e}")
             return []
+
+    def _build_content_preview(self, result: Dict[str, Any], query: str) -> str:
+        """Create a concise content preview highlighting matches."""
+        content = result.get('content') or result.get('body') or ''
+        snippet = result.get('snippet') or ''
+
+        if snippet:
+            return snippet
+
+        if result.get('summary'):
+            return result['summary'][:200] + ('…' if len(result['summary']) > 200 else '')
+
+        if content:
+            lowered = content.lower()
+            q = query.lower().split()[0]
+            idx = lowered.find(q)
+            if idx != -1:
+                start = max(0, idx - 60)
+                end = min(len(content), idx + 140)
+                excerpt = content[start:end]
+                if start > 0:
+                    excerpt = '…' + excerpt
+                if end < len(content):
+                    excerpt = excerpt + '…'
+                return excerpt
+
+            # Show opening portion with ellipsis
+            short = content[:200].strip()
+            return short + ('…' if len(content) > 200 else '')
+
+        return ''
+
+    def _build_description(self, result: Dict[str, Any]) -> str:
+        """Build description block for result cards."""
+        parts = []
+        tags = result.get('tags') or ''
+        if tags:
+            cleaned = [t.strip() for t in tags.split(',') if t.strip()]
+            if cleaned:
+                parts.append('Tags: ' + ', '.join(cleaned[:5]))
+
+        created = result.get('created_at') or result.get('timestamp')
+        if created:
+            parts.append(f"Created: {created}")
+
+        note_type = result.get('type') or result.get('file_type')
+        if note_type:
+            parts.append(f"Type: {note_type}")
+
+        summary = result.get('summary')
+        if summary:
+            parts.append(summary[:140] + ('…' if len(summary) > 140 else ''))
+
+        return ' • '.join(parts) if parts else ''
     
     async def _get_template_suggestions(
         self, 
@@ -417,12 +472,16 @@ class UnifiedSearchService:
                 for row in similar_searches
             ])
             
-            # Template-based suggestions
+            conn.close()
+            
+        except Exception as e:
+            print(f"Error getting suggestions: {e}")
+        
+        if self.templates_service:
             template_keywords = [
                 "meeting", "standup", "project", "learning", "idea", 
                 "weekly review", "workout", "decision"
             ]
-            
             for keyword in template_keywords:
                 if keyword in query.lower():
                     suggestions.append({
@@ -430,11 +489,6 @@ class UnifiedSearchService:
                         "type": "template_action",
                         "icon": "✨"
                     })
-            
-            conn.close()
-            
-        except Exception as e:
-            print(f"Error getting suggestions: {e}")
         
         # Cache results
         self._suggestion_cache[cache_key] = suggestions

@@ -21,7 +21,7 @@
           "url": "https://your-domain.com/api/shortcuts/quick-note",
           "headers": {
             "Content-Type": "application/json",
-            "Authorization": "Bearer YOUR_API_KEY"
+            "Authorization": "Bearer INSERT_SECOND_BRAIN_TOKEN"
           },
           "body": {
             "content": "${text_input}",
@@ -54,7 +54,7 @@
           "url": "https://your-domain.com/api/shortcuts/voice-note",
           "headers": {
             "Content-Type": "application/json",
-            "Authorization": "Bearer YOUR_API_KEY"
+            "Authorization": "Bearer INSERT_SECOND_BRAIN_TOKEN"
           },
           "body": {
             "content": "${dictated_text}",
@@ -86,7 +86,7 @@
           "url": "https://your-domain.com/api/shortcuts/web-clip", 
           "headers": {
             "Content-Type": "application/json",
-            "Authorization": "Bearer YOUR_API_KEY"
+            "Authorization": "Bearer INSERT_SECOND_BRAIN_TOKEN"
           },
           "body": {
             "url": "${current_url}",
@@ -130,7 +130,7 @@
           "url": "https://your-domain.com/api/shortcuts/meeting-prep",
           "headers": {
             "Content-Type": "application/json", 
-            "Authorization": "Bearer YOUR_API_KEY"
+            "Authorization": "Bearer INSERT_SECOND_BRAIN_TOKEN"
           },
           "body": {
             "content": "${text_input}",
@@ -166,7 +166,7 @@
           "url": "https://your-domain.com/api/shortcuts/daily-capture",
           "headers": {
             "Content-Type": "application/json",
-            "Authorization": "Bearer YOUR_API_KEY"
+            "Authorization": "Bearer INSERT_SECOND_BRAIN_TOKEN"
           },
           "body": {
             "content": "${text_input}",

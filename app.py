@@ -43,8 +43,9 @@ import secrets
 import uuid
 import os
 from llm_utils import ollama_summarize, ollama_generate_title
-from tasks import process_note
+from tasks import process_note, process_ingestion_queue
 from services.audio_queue import audio_queue
+from error_monitoring import error_monitor, monitor_errors, error_context
 from services.auth_service import AuthService, Token, TokenData, User, UserInDB, oauth2_scheme, auth_scheme, verify_webhook_token, router as auth_router, init_auth_router
 from services.webhook_service import WebhookService
 from services.upload_service import UploadService
@@ -53,6 +54,7 @@ from services.notification_service import get_notification_service, notify_proce
 from services.notification_router import router as notification_router, init_notification_router
 from services.websocket_manager import get_connection_manager
 from services.realtime_events import notify_note_update, schedule_note_update
+from services.ingestion_queue import ingestion_queue, IngestionJobType, IngestionJobStatus
 from services.web_ingestion_service import WebIngestionService
 
 try:
@@ -148,6 +150,8 @@ async def _startup_tasks():
     await _start_worker()
     await _start_automation()
     await _start_audio_worker()
+    await _start_archivebox_worker()
+    await _start_background_ingestion()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -174,7 +178,24 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 templates = Jinja2Templates(directory=str(settings.base_dir / "templates"))
-app.mount("/static", StaticFiles(directory=str(settings.base_dir / "static")), name="static")
+
+# Custom static files with cache headers
+class CachedStaticFiles(StaticFiles):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if hasattr(response, 'headers'):
+            # Cache static assets for 1 hour, revalidate for development
+            if path.endswith(('.js', '.css', '.png', '.jpg', '.svg', '.ico')):
+                response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+            # Cache fonts and other assets longer
+            elif path.endswith(('.woff', '.woff2', '.ttf', '.eot')):
+                response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        return response
+
+app.mount("/static", CachedStaticFiles(directory=str(settings.base_dir / "static")), name="static")
 
 # Register real-time status endpoints (if module is available)
 if REALTIME_AVAILABLE:
@@ -335,6 +356,59 @@ def create_file_token(user_id: int, filename: str, ttl_seconds: int = 600) -> st
 def get_current_user_silent(request: Request) -> Optional[User]:
     return auth_service.get_current_user_silent(request)
 
+def _audio_duration_from_note(note: dict) -> str:
+    """Determine audio duration from converted wav if present, else via ffprobe on original."""
+    try:
+        import wave
+        # Prefer audio_filename field
+        fname = (note.get('audio_filename') or '').strip() or (note.get('file_filename') or '').strip()
+        if not fname:
+            return ""
+        p = settings.audio_dir / fname
+        # Prefer converted WAV if present
+        if not p.suffix.lower().endswith('.wav'):
+            alt = p.with_suffix('.converted.wav')
+            if alt.exists():
+                p = alt
+        if p.exists() and p.suffix.lower().endswith('.wav'):
+            with wave.open(str(p), 'rb') as wf:
+                frames = wf.getnframes()
+                rate = wf.getframerate()
+                if rate:
+                    def _format_hms(total_seconds: float) -> str:
+                        try:
+                            total_seconds = int(round(total_seconds))
+                            h, rem = divmod(total_seconds, 3600)
+                            m, s = divmod(rem, 60)
+                            return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+                        except Exception:
+                            return ""
+                    return _format_hms(frames / float(rate))
+        # Fall back to probing the original container via ffprobe
+        if (settings.audio_dir / fname).exists():
+            return _probe_duration_hms(str(settings.audio_dir / fname))
+    except Exception:
+        pass
+    return ""
+
+def _probe_duration_hms(file_path: str) -> str:
+    """Get duration from a media file using ffprobe"""
+    try:
+        import subprocess
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+            '-of', 'csv=p=0', file_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            duration = float(result.stdout.strip())
+            h, rem = divmod(int(duration), 3600)
+            m, s = divmod(rem, 60)
+            return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+    except Exception:
+        pass
+    return ""
+
 async def get_current_user(request: Request, token: Optional[str] = None):
     return await auth_service.get_current_user(request, token)
 
@@ -424,7 +498,22 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
     ''')
-    
+
+    # API tokens table for personal access tokens (shortcuts, integrations)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS api_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            name TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_used_at TEXT,
+            expires_at TEXT,
+            revoked INTEGER DEFAULT 0,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    ''')
+
     # Reminders table
     c.execute('''
         CREATE TABLE IF NOT EXISTS reminders (
@@ -609,10 +698,7 @@ from services.mobile_capture_router import router as mobile_router, init_mobile_
 init_mobile_capture_router(get_conn, get_current_user)
 app.include_router(mobile_router)
 
-# --- Include Unified Search Router ---
-from services.search_router import router as search_router, init_search_router
-init_search_router(get_conn, get_current_user, get_current_user_silent)
-app.include_router(search_router)
+# --- Search Router Already Included Above ---
 
 # --- Include Diagnostics Router ---
 from services.diagnostics_router import router as diagnostics_router, init_diagnostics_router
@@ -643,6 +729,31 @@ app.include_router(enhanced_discord_router)
 # ---- Notification Router ----
 init_notification_router(get_current_user)
 app.include_router(notification_router)
+
+# ---- Autom8 Integration Router ----
+from services.autom8_router import router as autom8_router, init_autom8_router
+init_autom8_router(get_current_user)
+app.include_router(autom8_router)
+
+# URL Ingestion Router
+from services.url_ingestion_router import router as url_ingestion_router, init_url_ingestion_router
+init_url_ingestion_router(get_current_user)
+app.include_router(url_ingestion_router)
+
+# ArchiveBox Integration Router
+try:
+    from services.archivebox_router import router as archivebox_router, init_archivebox_router
+    from config import settings
+    if settings.archivebox_enabled:
+        init_archivebox_router(get_conn, get_current_user)
+        app.include_router(archivebox_router)
+        print("✅ ArchiveBox router enabled and integrated")
+    else:
+        print("ℹ️  ArchiveBox router disabled via configuration")
+except ImportError as e:
+    print(f"⚠️  ArchiveBox router not available: {e}")
+except Exception as e:
+    print(f"❌ Failed to initialize ArchiveBox router: {e}")
 
 # ---- Demo Data Router ----
 
@@ -764,9 +875,158 @@ async def _start_audio_worker():
     queue_stats = audio_queue.get_queue_status()
     queued_count = queue_stats.get('status_counts', {}).get('queued', 0)
     print(f"📊 Found {queued_count} items in audio processing queue")
+
+
+async def _start_archivebox_worker():
+    """Start ArchiveBox background worker"""
+    if getattr(app.state, "archivebox_worker_started", False):
+        return
+    app.state.archivebox_worker_started = True
+
+    try:
+        from services.archivebox_worker import start_archivebox_worker
+        asyncio.create_task(start_archivebox_worker())
+        print("📦 ArchiveBox worker started")
+    except ImportError as e:
+        print(f"⚠️  ArchiveBox worker not available: {e}")
+    except Exception as e:
+        print(f"❌ Failed to start ArchiveBox worker: {e}")
+
+
+async def _start_background_ingestion():
+    """Start background ingestion service for continuous file watching"""
+    if getattr(app.state, "background_ingestion_started", False):
+        return
+    app.state.background_ingestion_started = True
+
+    try:
+        from services.background_ingestion import get_background_ingestion_service
+        service = get_background_ingestion_service()
+
+        # Start the background service
+        service.start()
+        print("📺 Background ingestion service started")
+
+        # Store service reference for later use
+        app.state.background_ingestion_service = service
+
+    except ImportError as e:
+        print(f"⚠️  Background ingestion service not available: {e}")
+    except Exception as e:
+        print(f"❌ Failed to start background ingestion service: {e}")
 # Add real-time status endpoints if available
 if REALTIME_AVAILABLE:
     create_status_endpoint(app)
+
+
+# Background ingestion endpoints
+@app.post("/api/admin/rescan-obsidian")
+async def rescan_obsidian_vault(background_tasks: BackgroundTasks):
+    """Rescan the entire Obsidian vault for new/changed files"""
+    try:
+        service = getattr(app.state, "background_ingestion_service", None)
+        if not service:
+            raise HTTPException(status_code=503, detail="Background ingestion service not available")
+
+        background_tasks.add_task(service.rescan_obsidian)
+        return JSONResponse(content={"message": "Obsidian vault rescan started"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start rescan: {str(e)}")
+
+
+@app.post("/api/admin/rescan-archivebox")
+async def rescan_archivebox(limit: int = Query(200, description="Maximum number of snapshots to process")):
+    """Rescan ArchiveBox snapshots for new content"""
+    try:
+        service = getattr(app.state, "background_ingestion_service", None)
+        if not service:
+            raise HTTPException(status_code=503, detail="Background ingestion service not available")
+
+        result = await service.rescan_archivebox(limit=limit)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start rescan: {str(e)}")
+
+
+@app.get("/api/admin/ingestion-status")
+async def get_ingestion_status():
+    """Get status of background ingestion services"""
+    service = getattr(app.state, "background_ingestion_service", None)
+    if not service:
+        return JSONResponse(content={"status": "disabled", "reason": "Service not initialized"})
+
+    status = {
+        "obsidian_vault": str(service.obsidian_vault) if service.obsidian_vault else None,
+        "archivebox_root": str(service.archivebox_root) if service.archivebox_root else None,
+        "watchdog_available": service._watchdog_available,
+        "running": service._running,
+        "observers_count": len(service._observers)
+    }
+
+    return JSONResponse(content=status)
+
+
+@app.get("/api/admin/graph-memory/models")
+async def get_available_ollama_models():
+    """Get list of available Ollama models for graph memory extraction"""
+    from graph_memory.extractor import GraphFactExtractor
+
+    try:
+        extractor = GraphFactExtractor()
+        models = extractor._get_available_ollama_models()
+
+        return JSONResponse(content={
+            "available_models": models,
+            "current_model": getattr(settings, 'ollama_model', 'llama3.2'),
+            "model_count": len(models)
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get available models: {str(e)}")
+
+
+@app.post("/api/admin/graph-memory/models")
+async def set_ollama_models(models: List[str]):
+    """Set the list of Ollama models to use for graph memory extraction"""
+    try:
+        if not models:
+            raise HTTPException(status_code=400, detail="Model list cannot be empty")
+
+        # Validate models are strings
+        valid_models = [m.strip() for m in models if isinstance(m, str) and m.strip()]
+        if not valid_models:
+            raise HTTPException(status_code=400, detail="No valid model names provided")
+
+        # Set environment variable for future use
+        os.environ["OLLAMA_MODELS"] = ",".join(valid_models)
+
+        return JSONResponse(content={
+            "message": f"Set Ollama models for graph memory extraction",
+            "models": valid_models,
+            "count": len(valid_models)
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set models: {str(e)}")
+
+
+@app.post("/api/admin/graph-memory/test-extraction")
+async def test_graph_memory_extraction(text: str = "John Smith works at TechCorp. Mary is his manager."):
+    """Test graph memory fact extraction with the current configuration"""
+    from graph_memory.extractor import GraphFactExtractor
+
+    try:
+        extractor = GraphFactExtractor()
+        facts = extractor.extract(text)
+
+        return JSONResponse(content={
+            "test_text": text,
+            "extracted_facts": facts,
+            "fact_count": len(facts),
+            "extraction_success": len(facts) > 0
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction test failed: {str(e)}")
 
 async def process_audio_queue():
     """Background task to process audio queue in FIFO order"""
@@ -1217,9 +1477,15 @@ def dashboard(
         return render_page(request, "landing.html", {})
     conn = get_conn()
     c = conn.cursor()
-    # Always load recent notes without URL parameters
+    # Always load recent notes without URL parameters - optimized query
     rows = c.execute(
-        "SELECT * FROM notes WHERE user_id = ? ORDER BY COALESCE(timestamp, created_at) DESC LIMIT 100",
+        """SELECT id, title, content, source, tags, timestamp, created_at,
+                  processing_status, audio_duration, audio_path, obsidian_path,
+                  image_path, pdf_path, youtube_url, status, word_count
+           FROM notes
+           WHERE user_id = ?
+           ORDER BY COALESCE(timestamp, created_at) DESC
+           LIMIT 100""",
         (current_user.id,),
     ).fetchall()
     notes = [dict(zip([col[0] for col in c.description], row)) for row in rows]
@@ -1230,59 +1496,6 @@ def dashboard(
             return 0
         return len([w for w in text.split() if w.strip()])
 
-    def _format_hms(total_seconds: float) -> str:
-        try:
-            total_seconds = int(round(total_seconds))
-            h, rem = divmod(total_seconds, 3600)
-            m, s = divmod(rem, 60)
-            return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
-        except Exception:
-            return ""
-
-    def _probe_duration_hms(path: str) -> str:
-        """Use ffprobe to get media duration in seconds and format as H:MM:SS."""
-        try:
-            import subprocess
-            result = subprocess.run(
-                [
-                    'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-                    '-of', 'default=noprint_wrappers=1:nokey=1', path
-                ],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                seconds = float(result.stdout.strip())
-                return _format_hms(seconds)
-        except Exception:
-            pass
-        return ""
-
-    def _audio_duration_from_note(note: dict) -> str:
-        """Determine audio duration from converted wav if present, else via ffprobe on original."""
-        try:
-            import wave
-            # Prefer audio_filename field
-            fname = (note.get('audio_filename') or '').strip() or (note.get('file_filename') or '').strip()
-            if not fname:
-                return ""
-            p = settings.audio_dir / fname
-            # Prefer converted WAV if present
-            if not p.suffix.lower().endswith('.wav'):
-                alt = p.with_suffix('.converted.wav')
-                if alt.exists():
-                    p = alt
-            if p.exists() and p.suffix.lower().endswith('.wav'):
-                with wave.open(str(p), 'rb') as wf:
-                    frames = wf.getnframes()
-                    rate = wf.getframerate()
-                    if rate:
-                        return _format_hms(frames / float(rate))
-            # Fall back to probing the original container via ffprobe
-            if (settings.audio_dir / fname).exists():
-                return _probe_duration_hms(str(settings.audio_dir / fname))
-        except Exception:
-            pass
-        return ""
 
     def _tz_abbrev(ts: str | None) -> str:
         """Return local timezone abbreviation for the given timestamp string.
@@ -1602,7 +1815,7 @@ async def transcribe_requeue(
     c = conn.cursor()
     rows = c.execute(
         """
-        SELECT id FROM notes
+        SELECT id, audio_filename, content_hash FROM notes
         WHERE user_id=? AND type='audio' AND (status='pending' OR status LIKE 'transcribing:%')
         ORDER BY id DESC LIMIT ?
         """,
@@ -1610,17 +1823,55 @@ async def transcribe_requeue(
     ).fetchall()
     conn.close()
     count = 0
-    for (nid,) in rows:
+    for nid, audio_filename, note_hash in rows:
+        existing = ingestion_queue.get_latest_job_for_note(nid)
+        if existing and existing.status in (IngestionJobStatus.QUEUED.value, IngestionJobStatus.PROCESSING.value):
+            continue
+        ingestion_queue.enqueue(
+            IngestionJobType.AUDIO_TRANSCRIPTION,
+            note_id=nid,
+            user_id=current_user.id,
+            payload={"stored_filename": audio_filename},
+            priority=1,
+            content_hash=note_hash,
+        )
         try:
-            if REALTIME_AVAILABLE:
-                background_tasks.add_task(process_note_with_status, nid)
-            else:
-                background_tasks.add_task(process_note, nid)
-            count += 1
+            audio_queue.add_to_queue(nid, current_user.id)
         except Exception:
-            background_tasks.add_task(process_note, nid)
-            count += 1
+            pass
+        background_tasks.add_task(process_ingestion_queue)
+        count += 1
     return {"success": True, "requeued": count}
+
+
+@app.get("/api/ingestion/jobs/{job_key}")
+async def get_ingestion_job_status(
+    job_key: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch ingestion job status for the authenticated user."""
+
+    job = ingestion_queue.get_job_by_key(job_key)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.user_id and job.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized for this job")
+
+    # Ensure the note (if present) belongs to the user
+    if job.note_id:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM notes WHERE id = ? AND user_id = ?",
+                (job.note_id, current_user.id),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=403, detail="Not authorized for this job")
+        finally:
+            conn.close()
+
+    return {"success": True, "job": job.to_api()}
 @app.post("/webhook/audio")
 async def webhook_audio_upload(
     background_tasks: BackgroundTasks,
@@ -2832,6 +3083,10 @@ async def capture(
                 'processing_type': result['processing_type'],
                 'metadata': result['metadata']
             }
+            file_hash = result.get('content_hash')
+            if file_hash:
+                content_hash = file_hash
+                file_metadata['content_hash'] = file_hash
             
             # Set processing status based on file type
             if note_type == 'audio':
@@ -2921,29 +3176,55 @@ async def capture(
         except Exception as e:
             print(f"Smart Automation workflow trigger failed: {e}")
             # Continue without blocking the main capture flow
-        
+
+        ingestion_job_payload = None
+
         # Queue background processing if needed
         if processing_status == "pending":
-            # Prefer realtime-enabled enhanced tasks if available; otherwise fallback
+            job = ingestion_queue.enqueue(
+                IngestionJobType.AUDIO_TRANSCRIPTION,
+                note_id=note_id,
+                user_id=current_user.id,
+                payload={
+                    "stored_filename": stored_filename,
+                    "original_filename": file.filename if file else None,
+                },
+                priority=1,
+                content_hash=content_hash,
+            )
+            ingestion_job_payload = job.to_api()
+
             try:
-                if REALTIME_AVAILABLE:
-                    background_tasks.add_task(process_note_with_status, note_id)
-                else:
-                    background_tasks.add_task(process_note, note_id)
+                audio_queue.add_to_queue(note_id, current_user.id)
             except Exception:
-                # Final fallback to basic processor
+                pass
+
+            background_tasks.add_task(process_ingestion_queue)
+        elif REALTIME_AVAILABLE and process_note_with_status is not None and note_type != 'audio':
+            try:
+                background_tasks.add_task(process_note_with_status, note_id)
+            except Exception:
                 background_tasks.add_task(process_note, note_id)
-        
+
         # Return success response
         if "application/json" in request.headers.get("accept", ""):
-            return {
-                "success": True, 
+            response_payload = {
+                "success": True,
                 "id": note_id,
                 "status": processing_status,
                 "file_type": note_type,
                 "extracted_text_length": len(extracted_text),
-                "message": f"{'File uploaded and queued for processing' if processing_status == 'pending' else 'Note saved successfully'}"
+                "message": (
+                    "File uploaded and queued for processing"
+                    if processing_status == 'pending'
+                    else "Note saved successfully"
+                ),
             }
+            if ingestion_job_payload:
+                response_payload["ingestion_job"] = ingestion_job_payload
+            if content_hash:
+                response_payload["content_hash"] = content_hash
+            return response_payload
         else:
             success_msg = f"Note saved successfully"
             if processing_status == "pending":
@@ -2985,6 +3266,36 @@ async def webhook_apple(
     user_id = data.get("user_id", 1)
 
     return webhook_service.process_apple_webhook(data, user_id)
+
+
+async def _render_personal_token_page(request: Request, current_user: User):
+    tokens = auth_service.list_api_tokens(current_user.id)
+    return templates.TemplateResponse(
+        "personal_tokens.html",
+        {
+            "request": request,
+            "user": current_user,
+            "tokens": tokens,
+        },
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_root(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Primary settings page – currently surfaces personal API token management."""
+    return await _render_personal_token_page(request, current_user)
+
+
+@app.get("/settings/tokens", response_class=HTMLResponse)
+async def personal_tokens_settings(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    return await _render_personal_token_page(request, current_user)
+
 
 @app.post("/sync/obsidian")
 def sync_obsidian(
@@ -3634,7 +3945,10 @@ async def get_recent_captures(
     conn = get_conn()
     c = conn.cursor()
     
-    query = "SELECT * FROM notes WHERE user_id = ?"
+    query = """SELECT id, title, content, source, tags, timestamp, created_at,
+                     processing_status, audio_duration, audio_path, obsidian_path,
+                     image_path, pdf_path, youtube_url, status, word_count
+               FROM notes WHERE user_id = ?"""
     params = [current_user.id]
     
     if type:
@@ -4466,7 +4780,23 @@ async def api_create_note(
         # Queue for AI processing if available
         if background_tasks:
             background_tasks.add_task(process_note, note_id)
-        
+
+        # Queue URL archiving if URLs are detected in content
+        try:
+            from services.url_archiving_integration import integrate_url_archiving_with_note
+            if content:
+                job_keys = integrate_url_archiving_with_note(
+                    note_id=note_id,
+                    user_id=current_user.id,
+                    content=content,
+                    priority=5,
+                    metadata={"source": "api_create_note"}
+                )
+                if job_keys:
+                    logger.info(f"🔗 Created {len(job_keys)} archive jobs for note {note_id}")
+        except Exception as e:
+            logger.warning(f"URL archiving failed for note {note_id}: {e}")
+
         return note_payload
     except Exception as e:
         conn.rollback()
@@ -4526,6 +4856,8 @@ async def api_search_notes(
             raise HTTPException(status_code=500, detail=f"Search failed: {str(fallback_error)}")
         finally:
             conn.close()
+
+
 
 @app.get("/api/stats")
 async def api_get_stats(current_user: User = Depends(get_current_user)):
@@ -5516,6 +5848,40 @@ def analytics_dashboard(request: Request):
         "request": request,
         "current_user": current_user
     })
+
+# ---- Error Monitoring Endpoints ----
+
+@app.get("/api/system/errors")
+async def get_error_summary(
+    hours: int = 24,
+    current_user: User = Depends(get_current_user)
+):
+    """Get error summary for monitoring dashboard"""
+    return error_monitor.get_error_summary(hours)
+
+@app.get("/api/system/errors/recent")
+async def get_recent_errors(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user)
+):
+    """Get recent error events"""
+    return error_monitor.get_recent_errors(limit)
+
+@app.get("/api/system/health")
+async def get_system_health():
+    """Enhanced system health check with error monitoring"""
+    health = error_monitor.health_check()
+    return {
+        "status": health["status"],
+        "timestamp": datetime.now().isoformat(),
+        "error_stats": health,
+        "version": "1.0.0",
+        "services": {
+            "database": "healthy",
+            "auth": "healthy",
+            "error_monitor": "healthy"
+        }
+    }
 
 @app.get("/debug/voice")
 async def debug_voice_recording():

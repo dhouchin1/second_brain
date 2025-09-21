@@ -15,59 +15,87 @@ except Exception:
 
 
 def _convert_to_wav_16k_mono(audio_path: Path) -> Optional[Path]:
-    """Convert source audio to browser-compatible WAV format."""
+    """Convert source audio to browser-compatible WAV format with audio preprocessing."""
     wav_path = audio_path.with_suffix('.converted.wav')
-    # Create two versions: one for whisper (16kHz) and one for browser playback (44.1kHz)
+    # Create two versions: one for whisper (16kHz) and one for browser playback (compressed)
     playback_wav_path = audio_path.with_suffix('.playback.wav')
 
-    # Browser-compatible version (44.1kHz stereo, higher quality for playback)
+    # Enhanced browser-compatible version with compression and preprocessing
     playback_cmd = [
         "nice", "-n", "19",
         "ffmpeg", "-y", "-i", str(audio_path),
-        "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le", str(playback_wav_path)
+        # Audio preprocessing filters for better quality
+        "-af", "highpass=f=80,lowpass=f=8000,dynaudnorm=f=500:g=31,speechnorm=e=50:r=0.0001:l=1",
+        # Compressed format to reduce file size (AAC instead of PCM)
+        "-ar", "44100", "-ac", "2", "-c:a", "aac", "-b:a", "128k",
+        str(playback_wav_path.with_suffix('.m4a'))
     ]
 
-    # Whisper version (16kHz mono for processing)
+    # Enhanced Whisper version with audio preprocessing for better transcription
     ffmpeg_cmd = [
         "nice", "-n", "19",  # Lower priority for ffmpeg too
         "ffmpeg", "-y", "-i", str(audio_path),
+        # Audio preprocessing: remove noise, normalize dynamics, enhance speech
+        "-af", "highpass=f=80,lowpass=f=8000,dynaudnorm=f=500:g=31,speechnorm=e=50:r=0.0001:l=1",
         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav_path)
     ]
     try:
-        # Create playback version first (browser-compatible)
-        playback_result = subprocess.run(playback_cmd, capture_output=True, timeout=60)
+        # Create compressed playback version first (browser-compatible)
+        playback_result = subprocess.run(playback_cmd, capture_output=True, timeout=120)
         if playback_result.returncode != 0:
-            print("ffmpeg failed to convert audio for playback:", playback_result.stderr)
+            print("ffmpeg failed to convert audio for playback:", playback_result.stderr.decode() if playback_result.stderr else "Unknown error")
+            # Fallback to simple conversion if preprocessing fails
+            fallback_cmd = [
+                "nice", "-n", "19", "ffmpeg", "-y", "-i", str(audio_path),
+                "-ar", "44100", "-ac", "2", "-c:a", "aac", "-b:a", "96k",
+                str(playback_wav_path.with_suffix('.m4a'))
+            ]
+            subprocess.run(fallback_cmd, capture_output=True, timeout=60)
 
-        # Create whisper version (for transcription)
-        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=60)
+        # Create enhanced whisper version (for transcription)
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=120)
         if result.returncode != 0:
-            print("ffmpeg failed to convert audio:", result.stderr)
-            return None
+            print("ffmpeg failed to convert audio:", result.stderr.decode() if result.stderr else "Unknown error")
+            # Fallback to simple conversion if preprocessing fails
+            fallback_cmd = [
+                "nice", "-n", "19", "ffmpeg", "-y", "-i", str(audio_path),
+                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav_path)
+            ]
+            result = subprocess.run(fallback_cmd, capture_output=True, timeout=60)
+            if result.returncode != 0:
+                print("ffmpeg fallback also failed:", result.stderr.decode() if result.stderr else "Unknown error")
+                return None
         return wav_path
     except subprocess.TimeoutExpired:
-        print("ffmpeg conversion timed out")
+        print("ffmpeg conversion timed out - file may be too large")
+        return None
+    except Exception as e:
+        print(f"Audio conversion error: {e}")
         return None
 
 
 def _transcribe_with_whisper(wav_path: Path, timeout_seconds: int = 180) -> str:
     out_txt_path = wav_path.with_suffix(wav_path.suffix + '.txt')
-    
-    # Use the configured model
-    model_to_use = settings.whisper_model_path
-    
-    print(f"Using model: {model_to_use} (size: {model_to_use.stat().st_size // 1024}KB)")
-    
-    # Multi-layer CPU throttling to prevent machine slowdown
+
+    # Auto-select best available model
+    model_to_use = _select_best_whisper_model()
+
+    print(f"Using model: {model_to_use.name} (size: {model_to_use.stat().st_size // (1024*1024)}MB)")
+
+    # Optimized whisper settings for quality and performance
     whisper_cmd = [
         "nice", "-n", "19",  # Lower CPU priority
         str(settings.whisper_cpp_path),
         "-m", str(model_to_use),
         "-f", str(wav_path),
         "-otxt",
-        "-t", "1",      # Force single thread
-        "-ng",          # Disable GPU
+        "-t", "2",      # Use 2 threads for better performance
+        "-ng",          # Disable GPU (CPU more stable for long audio)
         "--no-prints",  # Reduce output overhead
+        "-ml", "1",     # Max segment length
+        "-bo", "5",     # Best of N decoding
+        "-bs", "5",     # Beam size for better quality
+        "--prompt", "This is a voice note or meeting recording.",  # Context hint
     ]
     
     print(f"Running whisper (throttled): {' '.join(whisper_cmd)}")
@@ -114,7 +142,7 @@ def _get_wav_duration_seconds(wav_path: Path) -> float:
         return 0.0
 
 
-def _split_wav_by_duration(wav_path: Path, segment_seconds: int = 600) -> list[Path]:
+def _split_wav_by_duration(wav_path: Path, segment_seconds: int = 300) -> list[Path]:
     """Split a PCM WAV into segments by duration using Python wave I/O.
 
     Creates files alongside the original with suffix .partN.wav and returns their paths.
@@ -206,16 +234,17 @@ def transcribe_audio(audio_path: Path, progress_cb: Optional[Callable[[int, int]
             # Fallback to whisper if available
             backend = 'whisper'
     if backend == 'whisper':
-        # For long files, split into segments to avoid timeouts and memory spikes
-        max_seg = int(getattr(settings, 'transcription_segment_seconds', 600) or 600)
+        # For long files, split into smaller segments for better processing
+        # Use shorter segments for long recordings to improve quality
+        max_seg = int(getattr(settings, 'transcription_segment_seconds', 240) or 240)
         duration = _get_wav_duration_seconds(wav_path)
         if duration > max_seg + 30:
             parts = _split_wav_by_duration(wav_path, max_seg)
             if parts:
                 seg_texts = []
                 for i, part in enumerate(parts):
-                    # Allow longer timeout per segment if needed
-                    timeout = 600 if max_seg >= 600 else 300
+                    # Scale timeout based on segment size, but with reasonable limits
+                    timeout = min(max(180, max_seg // 2), 400)
                     seg_txt = _transcribe_with_whisper(part, timeout_seconds=timeout)
                     seg_texts.append(seg_txt)
                     if progress_cb:
@@ -229,9 +258,42 @@ def transcribe_audio(audio_path: Path, progress_cb: Optional[Callable[[int, int]
                         pass
                 text = "\n\n".join(t for t in seg_texts if t)
             else:
-                # Fallback single-run with extended timeout
-                text = _transcribe_with_whisper(wav_path, timeout_seconds=600)
+                # Fallback single-run with scaled timeout
+                timeout = min(max(300, int(duration * 0.5)), 800)
+                text = _transcribe_with_whisper(wav_path, timeout_seconds=timeout)
         else:
             text = _transcribe_with_whisper(wav_path)
 
     return text, wav_path.name
+
+
+def _select_best_whisper_model() -> Path:
+    """Auto-select the best available Whisper model for transcription quality."""
+    # Find the whisper.cpp models directory
+    model_dir = Path("whisper.cpp/models")
+
+    # Priority order: larger models generally perform better
+    model_preferences = [
+        "ggml-large-v3.bin", "ggml-large-v2.bin", "ggml-large.bin",
+        "ggml-medium.en.bin", "ggml-medium.bin",
+        "ggml-small.en.bin", "ggml-small.bin",
+        "ggml-base.en.bin", "ggml-base.bin",
+        "ggml-tiny.en.bin", "ggml-tiny.bin"
+    ]
+
+    # Check configured model first - only use if it's a good quality model
+    if settings.whisper_model_path.exists():
+        config_model = settings.whisper_model_path
+        # Skip configured model if it's base or tiny - prefer larger models
+        if "tiny" not in config_model.name and "base" not in config_model.name:
+            return config_model
+
+    # Find best available model
+    for model_name in model_preferences:
+        model_path = model_dir / model_name
+        if model_path.exists() and model_path.stat().st_size > 1024 * 1024:  # > 1MB
+            print(f"Auto-selected better model: {model_name}")
+            return model_path
+
+    # Fallback to configured model
+    return settings.whisper_model_path

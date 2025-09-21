@@ -8,6 +8,7 @@ Extracted from app.py to provide clean separation of authentication concerns.
 import os
 import secrets
 import sqlite3
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -41,6 +42,11 @@ class User(BaseModel):
 
 class UserInDB(User):
     hashed_password: str
+
+
+class CreateAPITokenRequest(BaseModel):
+    name: Optional[str] = None
+    expires_in_days: Optional[int] = None
 
 
 # --- Authentication Configuration ---
@@ -89,7 +95,20 @@ class AuthService:
         if row:
             return UserInDB(id=row[0], username=row[1], hashed_password=row[2])
         return None
-    
+
+    def get_user_by_id(self, user_id: int) -> Optional[UserInDB]:
+        """Get user by primary key."""
+        conn = self.get_conn()
+        c = conn.cursor()
+        row = c.execute(
+            "SELECT id, username, hashed_password FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        conn.close()
+        if row:
+            return UserInDB(id=row[0], username=row[1], hashed_password=row[2])
+        return None
+
     def get_user_by_email(self, email: str) -> Optional[UserInDB]:
         """Get user by email address."""
         conn = self.get_conn()
@@ -167,7 +186,137 @@ class AuthService:
         expire = datetime.utcnow() + timedelta(seconds=ttl_seconds)
         payload = {"uid": user_id, "fn": filename, "exp": expire}
         return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-    
+
+    # --- Personal API Tokens ---
+
+    def _hash_token(self, token: str) -> str:
+        """Hash raw token for storage."""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def create_api_token(
+        self,
+        user_id: int,
+        name: Optional[str] = None,
+        expires_in_days: Optional[int] = None,
+    ) -> dict:
+        """Create a personal access token for API clients (e.g., Shortcuts).
+
+        Returns the plaintext token once so the caller can persist it.
+        """
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = self._hash_token(raw_token)
+        expires_at = None
+        if expires_in_days and expires_in_days > 0:
+            expires_at = (datetime.utcnow() + timedelta(days=expires_in_days)).strftime("%Y-%m-%d %H:%M:%S")
+
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                """
+                INSERT INTO api_tokens (user_id, token_hash, name, expires_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, token_hash, name, expires_at),
+            )
+            conn.commit()
+            token_id = c.lastrowid
+        finally:
+            conn.close()
+
+        return {
+            "token": raw_token,
+            "token_id": token_id,
+            "name": name,
+            "expires_at": expires_at,
+        }
+
+    def list_api_tokens(self, user_id: int) -> list[dict]:
+        """List metadata for active tokens owned by the user."""
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            rows = c.execute(
+                """
+                SELECT id, name, created_at, last_used_at, expires_at, revoked
+                FROM api_tokens
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        tokens: list[dict] = []
+        for row in rows:
+            tokens.append(
+                {
+                    "id": row[0],
+                    "name": row[1],
+                    "created_at": row[2],
+                    "last_used_at": row[3],
+                    "expires_at": row[4],
+                    "revoked": bool(row[5]),
+                }
+            )
+        return tokens
+
+    def revoke_api_token(self, user_id: int, token_id: int) -> bool:
+        """Mark a token as revoked."""
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            c.execute(
+                """
+                UPDATE api_tokens
+                SET revoked = 1
+                WHERE id = ? AND user_id = ?
+                """,
+                (token_id, user_id),
+            )
+            conn.commit()
+            return c.rowcount > 0
+        finally:
+            conn.close()
+
+    def get_user_by_api_token(self, token: str) -> Optional[User]:
+        """Resolve API token to user if valid and active."""
+        if not token:
+            return None
+
+        token_hash = self._hash_token(token)
+        conn = self.get_conn()
+        try:
+            c = conn.cursor()
+            row = c.execute(
+                """
+                SELECT id, user_id
+                FROM api_tokens
+                WHERE token_hash = ?
+                  AND revoked = 0
+                  AND (expires_at IS NULL OR expires_at > datetime('now'))
+                """,
+                (token_hash,),
+            ).fetchone()
+
+            if not row:
+                return None
+
+            token_id, user_id = row
+            c.execute(
+                "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
+                (token_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        user = self.get_user_by_id(user_id)
+        if user:
+            return User(id=user.id, username=user.username)
+        return None
+
     # --- Magic Link Authentication ---
     
     def create_magic_link_token(self) -> str:
@@ -340,12 +489,15 @@ class AuthService:
                 raise credentials_exception
             token_data = TokenData(username=username)
         except JWTError:
+            api_user = self.get_user_by_api_token(token)
+            if api_user:
+                return api_user
             raise credentials_exception
         user = self.get_user(token_data.username)
         if user is None:
             raise credentials_exception
         return user
-    
+
     def get_current_user_silent(self, request: Request) -> Optional[User]:
         """Best-effort user extraction for browser pages. Returns None if invalid."""
         token = None
@@ -364,7 +516,8 @@ class AuthService:
             user = self.get_user(username)
             return user
         except Exception:
-            return None
+            api_user = self.get_user_by_api_token(token)
+            return api_user
 
 
 # --- Standalone Functions for Webhook Authentication ---
@@ -718,6 +871,42 @@ async def start_recording_session(request: Request):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start recording session: {str(e)}")
+
+
+@router.post("/api/auth/personal-tokens")
+async def create_personal_token(request: Request, payload: CreateAPITokenRequest):
+    """Create a long-lived personal API token for the current user."""
+    current_user = await auth_service.get_current_user(request)
+    token_data = auth_service.create_api_token(
+        user_id=current_user.id,
+        name=payload.name,
+        expires_in_days=payload.expires_in_days,
+    )
+    return {
+        "success": True,
+        "token": token_data["token"],
+        "token_id": token_data["token_id"],
+        "name": token_data["name"],
+        "expires_at": token_data["expires_at"],
+        "message": "Copy this token now – it will not be shown again.",
+    }
+
+
+@router.get("/api/auth/personal-tokens")
+async def list_personal_tokens(request: Request):
+    """List existing personal API tokens for the current user."""
+    current_user = await auth_service.get_current_user(request)
+    tokens = auth_service.list_api_tokens(current_user.id)
+    return {"tokens": tokens}
+
+
+@router.delete("/api/auth/personal-tokens/{token_id}")
+async def revoke_personal_token(token_id: int, request: Request):
+    """Revoke a personal API token."""
+    current_user = await auth_service.get_current_user(request)
+    if not auth_service.revoke_api_token(current_user.id, token_id):
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"success": True}
 
 
 @router.get("/api/auth/token")

@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     # Can be overridden via env var MAX_FILE_SIZE
     max_file_size: int = 200 * 1024 * 1024  # 200MB default
     whisper_cpp_path: Path = BASE_DIR / "build/bin/whisper-cli"
-    whisper_model_path: Path = BASE_DIR / "models/ggml-base.en.bin"
+    # Auto-select best available model, fallback to this
+    whisper_model_path: Path = BASE_DIR / "whisper.cpp/models/ggml-base.en.bin"
     # Transcription backend: 'whisper' (whisper.cpp) or 'vosk' (lightweight, CPU-only)
     transcriber: str = "whisper"
     # Path to Vosk ASR model directory when using transcriber='vosk'
@@ -39,6 +40,13 @@ class Settings(BaseSettings):
     ollama_temperature: Optional[float] = None
     ollama_top_p: Optional[float] = None
     ollama_num_gpu: Optional[int] = None
+
+    # Autom8 integration settings
+    autom8_enabled: bool = True
+    autom8_api_url: str = "http://localhost:8000"
+    autom8_api_key: Optional[str] = None
+    autom8_fallback_to_ollama: bool = True
+    autom8_cost_threshold: float = 0.10  # Maximum cost per request in USD
     # AI processing controls (to reduce local CPU/RAM usage)
     ai_processing_enabled: bool = True
     ai_chunk_size_chars: int = 1500
@@ -53,11 +61,37 @@ class Settings(BaseSettings):
     batch_size_threshold: int = 5
     # Time to wait (seconds) before processing partial batches
     batch_timeout_seconds: int = 300  # 5 minutes
-    # Split long WAVs into segments (seconds) to avoid timeouts/CPU spikes
-    transcription_segment_seconds: int = 600
+    # Split long WAVs into segments (seconds) - shorter segments improve quality
+    transcription_segment_seconds: int = 240
     # Max seconds to process a single note before marking failed:timeout
-    # Increase this if you plan to upload longer audio recordings
-    processing_timeout_seconds: int = 1800  # 30 minutes
+    # Increased for long audio with preprocessing
+    processing_timeout_seconds: int = 3600  # 60 minutes
+
+    # Graph memory / knowledge graph integration
+    graph_memory_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('graph_memory_enabled', 'GRAPH_MEMORY_ENABLED')
+    )
+    graph_memory_extract_on_ingest: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('graph_memory_extract_on_ingest', 'GRAPH_MEMORY_EXTRACT_ON_INGEST')
+    )
+    graph_memory_extract_archivebox: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('graph_memory_extract_archivebox', 'GRAPH_MEMORY_EXTRACT_ARCHIVEBOX')
+    )
+    graph_memory_extract_obsidian: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('graph_memory_extract_obsidian', 'GRAPH_MEMORY_EXTRACT_OBSIDIAN')
+    )
+    graph_memory_max_facts: int = Field(
+        default=8,
+        validation_alias=AliasChoices('graph_memory_max_facts', 'GRAPH_MEMORY_MAX_FACTS')
+    )
+    graph_memory_use_llm: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('graph_memory_use_llm', 'GRAPH_MEMORY_USE_LLM')
+    )
 
     # Web ingestion defaults and quotas
     web_capture_screenshot_default: bool = Field(
@@ -307,6 +341,71 @@ class Settings(BaseSettings):
     capture_dedup_window_days: int = Field(
         default=30,
         validation_alias=AliasChoices('capture_dedup_window_days', 'CAPTURE_DEDUP_WINDOW_DAYS')
+    )
+
+    # SQLite-vec extension configuration
+    sqlite_vec_path: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices('sqlite_vec_path', 'SQLITE_VEC_PATH')
+    )
+    # Enable vector search features (requires sqlite-vec extension)
+    vector_search_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('vector_search_enabled', 'VECTOR_SEARCH_ENABLED')
+    )
+
+    # ArchiveBox Configuration
+    archivebox_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('archivebox_enabled', 'ARCHIVEBOX_ENABLED')
+    )
+    archivebox_data_dir: Path = Field(
+        default=BASE_DIR / "archivebox_data",
+        validation_alias=AliasChoices('archivebox_data_dir', 'ARCHIVEBOX_DATA_DIR')
+    )
+    archivebox_docker_image: str = Field(
+        default="archivebox/archivebox:latest",
+        validation_alias=AliasChoices('archivebox_docker_image', 'ARCHIVEBOX_DOCKER_IMAGE')
+    )
+    archivebox_timeout: int = Field(
+        default=60,
+        validation_alias=AliasChoices('archivebox_timeout', 'ARCHIVEBOX_TIMEOUT')
+    )
+    archivebox_only_new: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('archivebox_only_new', 'ARCHIVEBOX_ONLY_NEW')
+    )
+    archivebox_extract: str = Field(
+        default="title,favicon,wget,pdf,screenshot,dom,singlefile",
+        validation_alias=AliasChoices('archivebox_extract', 'ARCHIVEBOX_EXTRACT')
+    )
+    archivebox_chrome_binary: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices('archivebox_chrome_binary', 'ARCHIVEBOX_CHROME_BINARY')
+    )
+    archivebox_resolution: str = Field(
+        default="1440,2000",
+        validation_alias=AliasChoices('archivebox_resolution', 'ARCHIVEBOX_RESOLUTION')
+    )
+    # Hybrid storage strategy: 'symlink' (efficient) or 'copy' (portable)
+    archivebox_storage_strategy: str = Field(
+        default="symlink",
+        validation_alias=AliasChoices('archivebox_storage_strategy', 'ARCHIVEBOX_STORAGE_STRATEGY')
+    )
+    # Enable gradual rollout with feature flag
+    archivebox_feature_flag: bool = Field(
+        default=False,
+        validation_alias=AliasChoices('archivebox_feature_flag', 'ARCHIVEBOX_FEATURE_FLAG')
+    )
+    # Auto-cleanup old archives (days, 0 = disabled)
+    archivebox_auto_cleanup_days: int = Field(
+        default=365,
+        validation_alias=AliasChoices('archivebox_auto_cleanup_days', 'ARCHIVEBOX_AUTO_CLEANUP_DAYS')
+    )
+    # Maximum archive size per URL (MB, 0 = unlimited)
+    archivebox_max_size_mb: int = Field(
+        default=500,
+        validation_alias=AliasChoices('archivebox_max_size_mb', 'ARCHIVEBOX_MAX_SIZE_MB')
     )
 
     model_config = SettingsConfigDict(

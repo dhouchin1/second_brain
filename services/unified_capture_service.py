@@ -12,7 +12,6 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
-import hashlib
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -24,6 +23,8 @@ from services.web_ingestion_service import get_web_ingestion_service
 from services.content_deduplication_service import get_deduplication_service
 from services.embeddings import Embeddings
 from llm_utils import ollama_summarize, ollama_generate_title
+from services.ingestion_helpers import compute_text_hash, enqueue_ingestion_job
+from services.ingestion_queue import IngestionJobType
 
 # Import new infrastructure components
 from services.capture_error_handler import (
@@ -531,11 +532,9 @@ class UnifiedCaptureService:
                 "capture_request": self._serialize_request(request)
             }
             
-            # Compute content hash for deduplication
-            norm = (title or "") + "\n\n" + (content or "")
-            norm = " ".join(norm.lower().split())
-            content_hash = hashlib.sha256(norm.encode("utf-8")).hexdigest()
-            enhanced_metadata["content_hash"] = content_hash
+            content_hash = compute_text_hash([title, content])
+            if content_hash:
+                enhanced_metadata["content_hash"] = content_hash
             
             # Check for duplicates if enabled
             if getattr(settings, 'capture_dedup_enabled', True):
@@ -562,37 +561,60 @@ class UnifiedCaptureService:
                     return int(row[0])
             
             # Insert new note
+            now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute("""
-                INSERT INTO notes (title, body, tags, metadata, created_at, updated_at, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (
+                    title, body, content, tags, metadata, created_at, updated_at,
+                    status, user_id, summary, timestamp, content_hash, type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
-                content,
+                content or "",
+                content or "",
                 tags_str,
                 json.dumps(enhanced_metadata),
-                datetime.now().isoformat(),
-                datetime.now().isoformat(),
-                int(user_id) if user_id else None
+                now_iso,
+                now_iso,
+                "pending",
+                int(user_id) if user_id else None,
+                "",
+                now_iso,
+                content_hash,
+                request.content_type.value,
             ))
-            
+
             note_id = cursor.lastrowid
-            
-            # Store embeddings from chunks if available
-            for chunk in processing_result.chunks:
-                if chunk.metadata.get("embedding"):
-                    try:
-                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='note_vecs'")
-                        if cursor.fetchone():
-                            # Store the embedding from the first/best chunk
-                            cursor.execute(
-                                "INSERT OR REPLACE INTO note_vecs(note_id, embedding) VALUES (?, ?)",
-                                (note_id, json.dumps(chunk.metadata["embedding"]))
-                            )
-                            break  # Only store one embedding per note
-                    except Exception as e:
-                        logger.debug(f"Vector storage failed: {e}")
-            
+
             conn.commit()
+            enqueue_ingestion_job(
+                note_id,
+                int(user_id) if user_id else None,
+                job_type=IngestionJobType.NOTE_ENRICHMENT,
+                payload={"source": request.source_type.value},
+                content_hash=content_hash,
+            )
+
+            # Queue URL archiving if URLs are detected in content
+            try:
+                from services.url_archiving_integration import integrate_url_archiving_with_note
+                if content:
+                    job_keys = integrate_url_archiving_with_note(
+                        note_id=note_id,
+                        user_id=int(user_id) if user_id else None,
+                        content=content,
+                        priority=5,
+                        metadata={
+                            "source": "unified_capture_service",
+                            "content_type": request.content_type.value,
+                            "source_type": request.source_type.value
+                        }
+                    )
+                    if job_keys:
+                        logger.info(f"🔗 Created {len(job_keys)} archive jobs for unified capture note {note_id}")
+            except Exception as e:
+                logger.warning(f"URL archiving failed for unified capture note {note_id}: {e}")
+
             return note_id
             
         finally:
@@ -1102,9 +1124,7 @@ class UnifiedCaptureService:
             tags_str = ", ".join(set(tag.strip() for tag in tags if tag.strip()))
             
             # Compute stable content hash for dedup (title + content normalized)
-            norm = (title or "") + "\n\n" + (content or "")
-            norm = " ".join(norm.lower().split())  # collapse whitespace, lowercase
-            content_hash = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+            content_hash = compute_text_hash([title, content])
 
             # Dedup: if enabled, check for an existing note with same content hash
             if getattr(settings, 'capture_dedup_enabled', True):
@@ -1136,44 +1156,45 @@ class UnifiedCaptureService:
                     return int(row[0])
             
             # Mark as legacy processing in metadata
+            metadata = dict(metadata)
             metadata["processing_method"] = "legacy"
+            if content_hash:
+                metadata["content_hash"] = content_hash
             
             # Insert note
+            now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute("""
-                INSERT INTO notes (title, body, tags, metadata, created_at, updated_at, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (
+                    title, body, content, tags, metadata, created_at, updated_at,
+                    status, user_id, summary, timestamp, content_hash, type
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 title,
-                content,
+                content or "",
+                content or "",
                 tags_str,
-                json.dumps({**metadata, "content_hash": content_hash}),
-                datetime.now().isoformat(),
-                datetime.now().isoformat(),
-                int(user_id) if user_id else None
+                json.dumps(metadata),
+                now_iso,
+                now_iso,
+                "pending",
+                int(user_id) if user_id else None,
+                "",
+                now_iso,
+                content_hash,
+                "text",
             ))
-            
             note_id = cursor.lastrowid
-            
-            # Generate embeddings
-            try:
-                embedding_text = f"{title}\n\n{content}"
-                embedding = self.embedder.embed(embedding_text)
-                
-                # Store in vector table if available
-                try:
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='note_vecs'")
-                    if cursor.fetchone():
-                        cursor.execute(
-                            "INSERT OR REPLACE INTO note_vecs(note_id, embedding) VALUES (?, ?)",
-                            (note_id, json.dumps(embedding))
-                        )
-                except Exception as e:
-                    logger.debug(f"Vector storage not available: {e}")
-                    
-            except Exception as e:
-                logger.warning(f"Failed to generate embedding: {e}")
-            
+
             conn.commit()
+
+            enqueue_ingestion_job(
+                note_id,
+                int(user_id) if user_id else None,
+                job_type=IngestionJobType.NOTE_ENRICHMENT,
+                payload={"source": "unified_capture_legacy"},
+                content_hash=content_hash,
+            )
             return note_id
             
         finally:

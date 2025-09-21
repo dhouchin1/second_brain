@@ -6,7 +6,8 @@ mobile workflows and Siri support.
 """
 
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+import base64
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks, UploadFile
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 
 from services.apple_shortcuts_service import (
@@ -66,8 +67,7 @@ async def capture_quick_note(
 
 @router.post("/voice-note")
 async def capture_voice_note(
-    request_data: VoiceNoteRequest,
-    fastapi_request: Request
+    fastapi_request: Request,
 ):
     """Capture a voice note with transcription from Apple Shortcuts"""
     if not shortcuts_service:
@@ -79,7 +79,76 @@ async def capture_voice_note(
         raise HTTPException(status_code=401, detail="Authentication required")
     
     try:
-        result = await shortcuts_service.process_voice_note(request_data, current_user.id, fastapi_request)
+        payload: VoiceNoteRequest | None = None
+        content_type = fastapi_request.headers.get("content-type", "")
+        if content_type.startswith("multipart/form-data"):
+                form = await fastapi_request.form()
+
+                # Try different field names that Apple Shortcuts might use
+                upload: UploadFile | None = None
+                for field_name in ["file", "audio_file", "File", "Audio"]:
+                    field_value = form.get(field_name)
+                    if field_value and hasattr(field_value, 'read'):  # Check if it's a file-like object
+                        upload = field_value
+                        break
+
+                if not upload:
+                    raise HTTPException(status_code=400, detail=f"Multipart request must include file field containing audio. Received fields: {list(form.keys())}")
+
+                audio_bytes = await upload.read()
+                if not audio_bytes:
+                    raise HTTPException(status_code=400, detail="Uploaded audio file is empty")
+
+                try:
+                    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+                except Exception as exc:  # pragma: no cover - defensive
+                    raise HTTPException(status_code=400, detail="Unable to encode audio") from exc
+
+                def _coerce_duration(value: Optional[str]) -> Optional[float]:
+                    if value in (None, "", "null"):
+                        return None
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return None
+
+                use_whisper_form = form.get("use_whisper")
+                if isinstance(use_whisper_form, str):
+                    use_whisper_value = use_whisper_form.lower() not in {"false", "0", "no"}
+                elif isinstance(use_whisper_form, bool):
+                    use_whisper_value = use_whisper_form
+                else:
+                    use_whisper_value = True
+
+                payload = VoiceNoteRequest(
+                    content=form.get("note") or form.get("content") or "",
+                    source=form.get("source") or "apple_shortcuts_voice_form",
+                    tags=form.get("tags") or None,
+                    device=form.get("device"),
+                    timestamp=form.get("timestamp"),
+                    audio_duration=_coerce_duration(form.get("audio_duration")),
+                    language=form.get("language") or "en-US",
+                    audio_file=audio_base64,
+                    use_whisper=use_whisper_value,
+                )
+        else:
+            try:
+                json_payload = await fastapi_request.json()
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Unsupported payload format. Send JSON or multipart form-data with audio file."
+                ) from exc
+
+            try:
+                payload = VoiceNoteRequest(**json_payload)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid voice note payload: {exc}") from exc
+
+        if not payload or not payload.audio_file:
+            raise HTTPException(status_code=400, detail="Voice payload missing audio file data")
+
+        result = await shortcuts_service.process_voice_note(payload, current_user.id, fastapi_request)
         return JSONResponse(content=result)
         
     except Exception as e:
@@ -290,18 +359,21 @@ async def shortcuts_setup_json(fastapi_request: Request):
             "reminder": f"{base_url}/api/shortcuts/reminder"
         },
         "authentication": {
-            "method": "session_cookie",
-            "note": "Authenticate via web interface first, then shortcuts will inherit session"
+            "method": "session_cookie,personal_token",
+            "note": "Recommended: generate a personal API token from /settings and add it as Authorization Bearer header in Shortcuts.",
+            "token_endpoint": f"{base_url}/api/auth/personal-tokens"
         },
         "mobile_capture_url": f"{base_url}/capture/mobile",
         "shortcuts_config": f"{base_url}/api/shortcuts/config",
         "instructions": [
             "1. Open the Shortcuts app on your iOS device",
-            "2. Download our pre-configured shortcuts from the config endpoint",
-            "3. Update the URLs to point to your Second Brain instance",
-            "4. Test each shortcut with sample content",
-            "5. Add shortcuts to your home screen for quick access",
-            "6. Configure Siri phrases for voice activation"
+            "2. Visit /settings in your browser and generate a personal API token",
+            "3. Download our pre-configured shortcuts from the config endpoint",
+            "4. Edit each shortcut to add an Authorization header: Bearer <your token>",
+            "5. Update the URLs to point to your Second Brain instance if needed",
+            "6. Test each shortcut with sample content",
+            "7. Add shortcuts to your home screen for quick access",
+            "8. Configure Siri phrases for voice activation"
         ],
         "siri_phrases": [
             "Quick note to Second Brain",

@@ -236,6 +236,7 @@ class FileProcessor:
             # Move into place
             shutil.move(str(saved_path), str(final_path))
             result['stored_filename'] = safe_filename
+            result['content_hash'] = self._compute_sha256(final_path)
 
             # Type-specific processing
             if category == 'image':
@@ -280,6 +281,17 @@ class FileProcessor:
             logger.error(f"process_saved_file failed for {saved_path}: {e}")
             result['error'] = str(e)
             return result
+
+    @staticmethod
+    def _compute_sha256(file_path: Path) -> str:
+        """Compute SHA-256 hash for a file in a streaming-safe way."""
+        hasher = hashlib.sha256()
+        with open(file_path, 'rb') as handle:
+            for chunk in iter(lambda: handle.read(8192), b""):
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()
     
     def validate_file(self, file_content: bytes, filename: str) -> Tuple[bool, str, Dict[str, Any]]:
         """

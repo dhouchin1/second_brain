@@ -31,39 +31,58 @@ class SearchService:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.vec_available = False
         self._enable_extensions()
         self._run_migrations()
         self.embedder = Embeddings()
 
     def _enable_extensions(self):
         self.conn.execute('PRAGMA foreign_keys=ON;')
+
+        # Try to load sqlite-vec extension
+        load_ok = False
         try:
             self.conn.enable_load_extension(True)
-            path = self.vec_ext_path
-            # Treat placeholder paths as unset
-            if path and path.startswith('/absolute/path/to/'):
-                path = None
-            # Try env path first
-            load_ok = False
-            if path:
-                try:
-                    self.conn.load_extension(path)
-                    load_ok = True
-                except Exception as e:
-                    print(f"[search] sqlite-vec load failed for {path}: {e}")
-            # Fallback: auto-detect from package
-            if not load_ok:
-                try:
-                    import sqlite_vec  # type: ignore
-                    auto_path = getattr(sqlite_vec, 'loadable_path', lambda: None)()
-                    if auto_path:
-                        self.conn.load_extension(auto_path)
+
+            # Method 1: Use sqlite_vec.load() (recommended)
+            try:
+                import sqlite_vec
+                sqlite_vec.load(self.conn)
+                load_ok = True
+                print("[search] sqlite-vec loaded successfully using sqlite_vec.load()")
+            except Exception as e:
+                print(f"[search] sqlite-vec package load failed: {e}")
+
+                # Method 2: Try extension path if provided
+                path = self.vec_ext_path
+                if path and not path.startswith('/absolute/path/to/'):
+                    try:
+                        self.conn.load_extension(path)
                         load_ok = True
+                        print(f"[search] sqlite-vec loaded from path: {path}")
+                    except Exception as e:
+                        print(f"[search] sqlite-vec load failed for {path}: {e}")
+
+            self.conn.enable_load_extension(False)
+
+            # Test if the extension is working
+            if load_ok:
+                try:
+                    result = self.conn.execute("SELECT vec_version()").fetchone()
+                    version = result[0] if result else "unknown"
+                    print(f"[search] sqlite-vec version: {version}")
                 except Exception as e:
-                    print(f"[search] sqlite-vec auto-detect load failed: {e}")
+                    print(f"[search] sqlite-vec version check failed: {e}")
+                    load_ok = False
+
         except Exception as e:
-            # Extension loading is optional; log and continue
-            print(f"[search] sqlite-vec not enabled: {e}")
+            print(f"[search] sqlite-vec extension loading failed: {e}")
+
+        self.vec_available = load_ok
+        if load_ok:
+            print("[search] Vector search enabled")
+        else:
+            print("[search] Vector search disabled - falling back to keyword-only search")
 
     def _run_migrations(self):
         cur = self.conn.cursor()
@@ -157,14 +176,16 @@ class SearchService:
         if len(words) == 1:
             return words[0]
         else:
-            # Use phrase search for multi-word queries
-            return f'"{q}"'
+            # Use OR operator for multiple terms so we match notes containing any word
+            # This is more forgiving than requiring the exact phrase, especially when
+            # semantic search (sqlite-vec) is unavailable.
+            return ' OR '.join(words)
 
     # ─── Search ─────────────────────────────────────────────────────────────
     def search(self, q: str, mode: str = 'hybrid', k: int = 20) -> list[sqlite3.Row]:
         if mode not in {'hybrid','keyword','semantic'}:
             mode = 'hybrid'
-        if mode == 'keyword' or not self._vec_table_exists():
+        if mode == 'keyword' or not self.vec_available or not self._vec_table_exists():
             return self._keyword(q, k)
         if mode == 'semantic':
             return self._semantic(q, k)
@@ -194,26 +215,33 @@ class SearchService:
             return []
 
     def _semantic(self, q: str, k: int) -> list[sqlite3.Row]:
-        if not self._vec_table_exists():
+        if not self.vec_available or not self._vec_table_exists():
             return []
         qvec = self.embedder.embed(q)
         cur = self.conn.cursor()
-        rows = cur.execute(
-            """
-            WITH vs AS (
-              SELECT note_id AS id,
-                     1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
-              FROM note_vecs
-              ORDER BY vs_rank DESC
-              LIMIT ?
-            )
-            SELECT n.*, vs.vs_rank AS score FROM vs JOIN notes n ON n.id = vs.id
-            ORDER BY score DESC
-            """, (json.dumps(qvec), k)).fetchall()
-        return rows
+        try:
+            rows = cur.execute(
+                """
+                WITH vs AS (
+                  SELECT note_id AS id,
+                         1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
+                  FROM note_vecs
+                  ORDER BY vs_rank DESC
+                  LIMIT ?
+                )
+                SELECT n.*, vs.vs_rank AS score FROM vs JOIN notes n ON n.id = vs.id
+                ORDER BY score DESC
+                """, (json.dumps(qvec), k)).fetchall()
+            return rows
+        except Exception as e:
+            if "no such module: vec0" in str(e).lower():
+                self.vec_available = False
+                return []
+            print(f"[search] semantic search failed for '{q}': {e}")
+            return []
 
     def _hybrid(self, q: str, k: int) -> list[sqlite3.Row]:
-        if not self._vec_table_exists():
+        if not self.vec_available or not self._vec_table_exists():
             return self._keyword(q, k)
         
         # Sanitize query for FTS part
@@ -226,34 +254,39 @@ class SearchService:
         cur = self.conn.cursor()
         try:
             rows = cur.execute(
-            """
-            WITH kw AS (
-              SELECT rowid AS id, bm25(notes_fts) AS kw_rank
-              FROM notes_fts
-              WHERE notes_fts MATCH ?
-              ORDER BY kw_rank
-              LIMIT 50
-            ),
-            vs AS (
-              SELECT note_id AS id, 1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
-              FROM note_vecs
-              ORDER BY vs_rank DESC
-              LIMIT 50
-            ),
-            unioned AS (
-              SELECT id, (1.0/(1.0+kw_rank)) AS kw_s, 0.0 AS vs_s FROM kw
-              UNION ALL
-              SELECT id, 0.0, vs_rank FROM vs
-            )
-            SELECT n.*,
-                   COALESCE(SUM(kw_s),0)*0.6 + COALESCE(SUM(vs_s),0)*0.4 AS score
-            FROM unioned u JOIN notes n ON n.id = u.id
-            GROUP BY n.id
-            ORDER BY score DESC
-            LIMIT ?
-            """, (sanitized_query, json.dumps(qvec), k)).fetchall()
+                """
+                WITH kw AS (
+                  SELECT rowid AS id, bm25(notes_fts) AS kw_rank
+                  FROM notes_fts
+                  WHERE notes_fts MATCH ?
+                  ORDER BY kw_rank
+                  LIMIT 50
+                ),
+                vs AS (
+                  SELECT note_id AS id, 1.0 - vec_distance_cosine(embedding, ?) AS vs_rank
+                  FROM note_vecs
+                  ORDER BY vs_rank DESC
+                  LIMIT 50
+                ),
+                unioned AS (
+                  SELECT id, (1.0/(1.0+kw_rank)) AS kw_s, 0.0 AS vs_s FROM kw
+                  UNION ALL
+                  SELECT id, 0.0, vs_rank FROM vs
+                )
+                SELECT n.*,
+                       COALESCE(SUM(kw_s),0)*0.6 + COALESCE(SUM(vs_s),0)*0.4 AS score
+                FROM unioned u JOIN notes n ON n.id = u.id
+                GROUP BY n.id
+                ORDER BY score DESC
+                LIMIT ?
+                """, (sanitized_query, json.dumps(qvec), k)).fetchall()
             return rows
         except Exception as e:
             print(f"[search] Hybrid search failed for '{sanitized_query}': {e}")
-            # Fallback to semantic search only
-            return self._semantic(q, k)
+            # Fall back to keyword-only results plus whatever semantic search can provide
+            semantic_rows = self._semantic(q, k)
+            for row in semantic_rows:
+                if row['id'] not in seen_ids:
+                    hybrid_results.append(row)
+                    seen_ids.add(row['id'])
+            return hybrid_results
