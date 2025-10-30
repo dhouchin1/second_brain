@@ -2372,6 +2372,211 @@
         </div>
     </div>
 
+    <!-- Advanced Search Modal -->
+    <div id="advancedSearchModal" class="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-60 hidden flex items-center justify-center p-4">
+        <div class="glass-dark rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-large animate-scale-in flex flex-col">
+
+            <!-- Search Header -->
+            <div class="p-6 pb-4 border-b border-slate-700">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-2xl font-bold text-white flex items-center">
+                        <svg class="w-6 h-6 mr-3 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        Advanced Search
+                    </h2>
+                    <button onclick="hideAdvancedSearchModal()" class="text-slate-400 hover:text-white transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Search Input -->
+                <div class="relative">
+                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                        <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </div>
+                    <input
+                        type="text"
+                        id="advancedSearchInput"
+                        placeholder="Search your notes, transcriptions, bookmarks..."
+                        class="w-full bg-slate-800 bg-opacity-50 text-white placeholder-slate-400 pl-12 pr-32 py-4 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        oninput="handleAdvancedSearchInput(event)"
+                        autocomplete="off"
+                    >
+                    <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                        <div class="flex items-center space-x-2">
+                            <kbd class="hidden sm:inline-block px-2 py-1 text-xs font-semibold text-slate-400 bg-slate-700 border border-slate-600 rounded">
+                                <span id="keyboardShortcut">Ctrl+K</span>
+                            </kbd>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="p-4 bg-slate-800 bg-opacity-30 border-b border-slate-700 overflow-x-auto">
+                <div class="flex flex-wrap gap-3 min-w-max">
+
+                    <!-- Date Range Filter -->
+                    <div class="flex items-center space-x-2">
+                        <label class="text-xs font-medium text-slate-400 uppercase tracking-wider">Date:</label>
+                        <div class="flex space-x-1">
+                            <button
+                                onclick="setDateFilter('7d')"
+                                id="dateFilter7d"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all date-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                7 days
+                            </button>
+                            <button
+                                onclick="setDateFilter('30d')"
+                                id="dateFilter30d"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all date-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                30 days
+                            </button>
+                            <button
+                                onclick="setDateFilter('all')"
+                                id="dateFilterAll"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all date-filter-btn bg-indigo-500 text-white"
+                            >
+                                All time
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Content Type Filter -->
+                    <div class="flex items-center space-x-2">
+                        <label class="text-xs font-medium text-slate-400 uppercase tracking-wider">Type:</label>
+                        <div class="flex flex-wrap gap-1">
+                            <button
+                                onclick="toggleTypeFilter('all')"
+                                id="typeFilterAll"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all type-filter-btn bg-indigo-500 text-white"
+                            >
+                                All
+                            </button>
+                            <button
+                                onclick="toggleTypeFilter('audio')"
+                                id="typeFilterAudio"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all type-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                                </svg>
+                                Audio
+                            </button>
+                            <button
+                                onclick="toggleTypeFilter('text')"
+                                id="typeFilterText"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all type-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                Text
+                            </button>
+                            <button
+                                onclick="toggleTypeFilter('web')"
+                                id="typeFilterWeb"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all type-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+                                </svg>
+                                Web
+                            </button>
+                            <button
+                                onclick="toggleTypeFilter('pdf')"
+                                id="typeFilterPdf"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all type-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                                </svg>
+                                PDF
+                            </button>
+                            <button
+                                onclick="toggleTypeFilter('image')"
+                                id="typeFilterImage"
+                                class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all type-filter-btn bg-slate-700 text-slate-300 hover:bg-slate-600"
+                            >
+                                <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                </svg>
+                                Image
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tag Filter -->
+                    <div class="flex items-center space-x-2">
+                        <label class="text-xs font-medium text-slate-400 uppercase tracking-wider">Tags:</label>
+                        <div class="relative">
+                            <input
+                                type="text"
+                                id="tagFilterInput"
+                                placeholder="Filter by tag..."
+                                class="px-3 py-1.5 text-xs bg-slate-700 text-white placeholder-slate-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[150px]"
+                                oninput="handleTagFilterInput(event)"
+                                autocomplete="off"
+                            >
+                            <!-- Tag autocomplete dropdown will be added in Phase 2 -->
+                        </div>
+                    </div>
+
+                    <!-- Status Filter -->
+                    <div class="flex items-center space-x-2">
+                        <label class="text-xs font-medium text-slate-400 uppercase tracking-wider">Status:</label>
+                        <select
+                            id="statusFilter"
+                            onchange="updateSearchFilters()"
+                            class="px-3 py-1.5 text-xs bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                        >
+                            <option value="all">All</option>
+                            <option value="active">Active</option>
+                            <option value="archived">Archived</option>
+                            <option value="favorite">Favorites</option>
+                        </select>
+                    </div>
+
+                    <!-- Clear Filters Button -->
+                    <button
+                        onclick="clearAllFilters()"
+                        id="clearFiltersBtn"
+                        class="ml-auto px-4 py-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-all hidden"
+                    >
+                        Clear Filters
+                    </button>
+                </div>
+
+                <!-- Active Filters Display -->
+                <div id="activeFiltersDisplay" class="mt-3 hidden">
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <span class="text-xs text-slate-400">Active filters:</span>
+                        <div id="activeFilterTags" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Results (Placeholder for Phase 2) -->
+            <div class="flex-1 overflow-y-auto p-6">
+                <div id="advancedSearchResults" class="text-center text-slate-400 py-12">
+                    <svg class="w-16 h-16 mx-auto mb-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <p class="text-lg font-medium mb-2">Start typing to search</p>
+                    <p class="text-sm text-slate-500">Search results will appear here</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
     <!-- Performance & Advanced Features JavaScript -->
     <script src="/static/js/dashboard-performance.js"></script>
     
@@ -3946,6 +4151,338 @@
                 window.audioRecorder.stopRecording();
             }
         }
+
+        // ===============================
+        // Advanced Search Modal Functions
+        // ===============================
+
+        // Advanced Search state management
+        const advancedSearchState = {
+            query: '',
+            dateRange: 'all',
+            contentTypes: ['all'],
+            tags: [],
+            status: 'all',
+            debounceTimer: null
+        };
+
+        // Show Advanced Search Modal
+        function showAdvancedSearchModal() {
+            const modal = document.getElementById('advancedSearchModal');
+            if (!modal) {
+                console.error('advancedSearchModal element not found!');
+                return;
+            }
+
+            // Hide quick actions if they're showing
+            if (typeof hideGlobalQuickActions === 'function') {
+                hideGlobalQuickActions();
+            }
+
+            // Show modal
+            modal.classList.remove('hidden');
+
+            // Focus on search input
+            setTimeout(() => {
+                const searchInput = document.getElementById('advancedSearchInput');
+                if (searchInput) {
+                    searchInput.focus();
+                }
+            }, 100);
+
+            // Set platform-specific keyboard shortcut
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const shortcutDisplay = document.getElementById('keyboardShortcut');
+            if (shortcutDisplay) {
+                shortcutDisplay.textContent = isMac ? 'Cmd+K' : 'Ctrl+K';
+            }
+        }
+
+        // Hide Advanced Search Modal
+        function hideAdvancedSearchModal() {
+            const modal = document.getElementById('advancedSearchModal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+
+            // Clear search input
+            const searchInput = document.getElementById('advancedSearchInput');
+            if (searchInput) {
+                searchInput.value = '';
+            }
+
+            // Reset search state
+            advancedSearchState.query = '';
+
+            // Clear results placeholder (will be replaced in Phase 2)
+            const resultsContainer = document.getElementById('advancedSearchResults');
+            if (resultsContainer) {
+                resultsContainer.innerHTML = `
+                    <svg class="w-16 h-16 mx-auto mb-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <p class="text-lg font-medium mb-2">Start typing to search</p>
+                    <p class="text-sm text-slate-500">Search results will appear here</p>
+                `;
+            }
+        }
+
+        // Handle search input with debouncing
+        function handleAdvancedSearchInput(event) {
+            const query = event.target.value.trim();
+            advancedSearchState.query = query;
+
+            // Clear existing debounce timer
+            if (advancedSearchState.debounceTimer) {
+                clearTimeout(advancedSearchState.debounceTimer);
+            }
+
+            // Debounce search execution by 300ms
+            advancedSearchState.debounceTimer = setTimeout(() => {
+                performAdvancedSearch();
+            }, 300);
+        }
+
+        // Set date filter
+        function setDateFilter(range) {
+            advancedSearchState.dateRange = range;
+
+            // Update button styles
+            document.querySelectorAll('.date-filter-btn').forEach(btn => {
+                btn.classList.remove('bg-indigo-500', 'text-white');
+                btn.classList.add('bg-slate-700', 'text-slate-300');
+            });
+
+            const activeBtn = document.getElementById(`dateFilter${range.charAt(0).toUpperCase() + range.slice(1)}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('bg-slate-700', 'text-slate-300');
+                activeBtn.classList.add('bg-indigo-500', 'text-white');
+            }
+
+            updateSearchFilters();
+        }
+
+        // Toggle content type filter
+        function toggleTypeFilter(type) {
+            // If clicking "all", reset to just "all"
+            if (type === 'all') {
+                advancedSearchState.contentTypes = ['all'];
+            } else {
+                // Remove "all" if present
+                const allIndex = advancedSearchState.contentTypes.indexOf('all');
+                if (allIndex !== -1) {
+                    advancedSearchState.contentTypes.splice(allIndex, 1);
+                }
+
+                // Toggle the selected type
+                const typeIndex = advancedSearchState.contentTypes.indexOf(type);
+                if (typeIndex === -1) {
+                    advancedSearchState.contentTypes.push(type);
+                } else {
+                    advancedSearchState.contentTypes.splice(typeIndex, 1);
+                }
+
+                // If no types selected, default to "all"
+                if (advancedSearchState.contentTypes.length === 0) {
+                    advancedSearchState.contentTypes = ['all'];
+                }
+            }
+
+            // Update button styles
+            document.querySelectorAll('.type-filter-btn').forEach(btn => {
+                const btnType = btn.id.replace('typeFilter', '').toLowerCase();
+                if (advancedSearchState.contentTypes.includes(btnType)) {
+                    btn.classList.remove('bg-slate-700', 'text-slate-300');
+                    btn.classList.add('bg-indigo-500', 'text-white');
+                } else {
+                    btn.classList.remove('bg-indigo-500', 'text-white');
+                    btn.classList.add('bg-slate-700', 'text-slate-300');
+                }
+            });
+
+            updateSearchFilters();
+        }
+
+        // Handle tag filter input
+        function handleTagFilterInput(event) {
+            const tagQuery = event.target.value.trim();
+
+            // Clear existing tags and add new one if not empty
+            if (tagQuery) {
+                advancedSearchState.tags = [tagQuery];
+            } else {
+                advancedSearchState.tags = [];
+            }
+
+            // Debounce the filter update
+            if (advancedSearchState.debounceTimer) {
+                clearTimeout(advancedSearchState.debounceTimer);
+            }
+
+            advancedSearchState.debounceTimer = setTimeout(() => {
+                updateSearchFilters();
+            }, 300);
+        }
+
+        // Update search filters and trigger search
+        function updateSearchFilters() {
+            // Update status from dropdown
+            const statusFilter = document.getElementById('statusFilter');
+            if (statusFilter) {
+                advancedSearchState.status = statusFilter.value;
+            }
+
+            // Show/hide clear filters button
+            const hasActiveFilters =
+                advancedSearchState.dateRange !== 'all' ||
+                !advancedSearchState.contentTypes.includes('all') ||
+                advancedSearchState.tags.length > 0 ||
+                advancedSearchState.status !== 'all';
+
+            const clearBtn = document.getElementById('clearFiltersBtn');
+            if (clearBtn) {
+                if (hasActiveFilters) {
+                    clearBtn.classList.remove('hidden');
+                } else {
+                    clearBtn.classList.add('hidden');
+                }
+            }
+
+            // Update active filters display
+            updateActiveFiltersDisplay();
+
+            // Trigger search
+            performAdvancedSearch();
+        }
+
+        // Update active filters display
+        function updateActiveFiltersDisplay() {
+            const display = document.getElementById('activeFiltersDisplay');
+            const tagsContainer = document.getElementById('activeFilterTags');
+
+            if (!display || !tagsContainer) return;
+
+            const filterTags = [];
+
+            // Add date filter tag
+            if (advancedSearchState.dateRange !== 'all') {
+                filterTags.push({
+                    label: `Date: ${advancedSearchState.dateRange}`,
+                    type: 'date'
+                });
+            }
+
+            // Add content type tags
+            if (!advancedSearchState.contentTypes.includes('all')) {
+                advancedSearchState.contentTypes.forEach(type => {
+                    filterTags.push({
+                        label: `Type: ${type}`,
+                        type: 'contentType'
+                    });
+                });
+            }
+
+            // Add tag filters
+            advancedSearchState.tags.forEach(tag => {
+                filterTags.push({
+                    label: `Tag: ${tag}`,
+                    type: 'tag'
+                });
+            });
+
+            // Add status filter
+            if (advancedSearchState.status !== 'all') {
+                filterTags.push({
+                    label: `Status: ${advancedSearchState.status}`,
+                    type: 'status'
+                });
+            }
+
+            // Update display
+            if (filterTags.length > 0) {
+                tagsContainer.innerHTML = filterTags.map(filter => `
+                    <span class="inline-flex items-center px-2 py-1 bg-indigo-500 bg-opacity-20 text-indigo-300 text-xs rounded-lg">
+                        ${filter.label}
+                    </span>
+                `).join('');
+                display.classList.remove('hidden');
+            } else {
+                display.classList.add('hidden');
+            }
+        }
+
+        // Clear all filters
+        function clearAllFilters() {
+            // Reset state
+            advancedSearchState.dateRange = 'all';
+            advancedSearchState.contentTypes = ['all'];
+            advancedSearchState.tags = [];
+            advancedSearchState.status = 'all';
+
+            // Reset UI elements
+            document.getElementById('tagFilterInput').value = '';
+            document.getElementById('statusFilter').value = 'all';
+
+            // Reset date filter buttons
+            setDateFilter('all');
+
+            // Reset type filter buttons
+            document.querySelectorAll('.type-filter-btn').forEach(btn => {
+                btn.classList.remove('bg-indigo-500', 'text-white');
+                btn.classList.add('bg-slate-700', 'text-slate-300');
+            });
+            document.getElementById('typeFilterAll').classList.remove('bg-slate-700', 'text-slate-300');
+            document.getElementById('typeFilterAll').classList.add('bg-indigo-500', 'text-white');
+
+            // Update display
+            updateSearchFilters();
+        }
+
+        // Perform advanced search (placeholder for Phase 2)
+        function performAdvancedSearch() {
+            console.log('Performing advanced search with state:', advancedSearchState);
+
+            // Placeholder: Just log the search state for now
+            // In Phase 2, this will make an API call to /api/search with the filters
+
+            const resultsContainer = document.getElementById('advancedSearchResults');
+            if (!resultsContainer) return;
+
+            if (advancedSearchState.query.length > 0) {
+                resultsContainer.innerHTML = `
+                    <div class="text-center text-slate-400 py-12">
+                        <div class="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                        <p class="text-sm">Searching for "${advancedSearchState.query}"...</p>
+                        <p class="text-xs text-slate-500 mt-2">Results will be displayed in Phase 2</p>
+                    </div>
+                `;
+            } else {
+                resultsContainer.innerHTML = `
+                    <svg class="w-16 h-16 mx-auto mb-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <p class="text-lg font-medium mb-2">Start typing to search</p>
+                    <p class="text-sm text-slate-500">Search results will appear here</p>
+                `;
+            }
+        }
+
+        // Keyboard shortcut listener for Ctrl+K or Cmd+K
+        document.addEventListener('keydown', function(event) {
+            // Check for Ctrl+K or Cmd+K
+            if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+                event.preventDefault();
+                showAdvancedSearchModal();
+            }
+
+            // Check for Escape key to close modal
+            if (event.key === 'Escape') {
+                const modal = document.getElementById('advancedSearchModal');
+                if (modal && !modal.classList.contains('hidden')) {
+                    hideAdvancedSearchModal();
+                }
+            }
+        });
 
         // ===============================
         // Notes Management Functions
