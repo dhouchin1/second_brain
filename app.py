@@ -136,8 +136,8 @@ async def lifespan(app: FastAPI):
     # Startup
     await _startup_tasks()
     yield
-    # Shutdown (if needed)
-    pass
+    # Shutdown
+    await _shutdown_tasks()
 
 async def _startup_tasks():
     """Combined startup tasks from legacy on_event handlers"""
@@ -148,6 +148,9 @@ async def _startup_tasks():
     await _start_worker()
     await _start_automation()
     await _start_audio_worker()
+
+    # Initialize memory system
+    await _init_memory_system()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -644,6 +647,10 @@ app.include_router(enhanced_discord_router)
 init_notification_router(get_current_user)
 app.include_router(notification_router)
 
+# ---- Memory-Augmented Chat Router ----
+from api.routes_chat import router as chat_router
+app.include_router(chat_router)
+
 # ---- Demo Data Router ----
 
 # --- Simple FIFO job worker for note processing ---
@@ -764,6 +771,54 @@ async def _start_audio_worker():
     queue_stats = audio_queue.get_queue_status()
     queued_count = queue_stats.get('status_counts', {}).get('queued', 0)
     print(f"📊 Found {queued_count} items in audio processing queue")
+
+async def _init_memory_system():
+    """Initialize memory augmentation system on startup"""
+    if getattr(app.state, "memory_system_started", False):
+        return
+    app.state.memory_system_started = True
+
+    try:
+        if not settings.memory_extraction_enabled:
+            print("⚠️  Memory extraction disabled in config")
+            return
+
+        from services.memory_service import MemoryService
+        from services.memory_extraction_service import MemoryExtractionService
+        from services.memory_consolidation_service import init_consolidation_queue
+        from services.model_manager import get_model_manager
+
+        # Initialize services
+        db = get_conn()
+        embeddings = get_embeddings_service()
+        memory_service = MemoryService(db, embeddings)
+        model_manager = get_model_manager()
+
+        extraction_service = MemoryExtractionService(
+            memory_service=memory_service,
+            ollama_url=settings.ollama_api_url,
+            model_manager=model_manager
+        )
+
+        # Start consolidation queue
+        init_consolidation_queue(extraction_service)
+
+        print("🧠 Memory augmentation system initialized successfully")
+
+    except Exception as e:
+        print(f"⚠️  Failed to initialize memory system: {e}")
+        # Don't fail startup - memory system is optional
+        print("⚠️  Continuing without memory augmentation")
+
+async def _shutdown_tasks():
+    """Shutdown tasks for graceful cleanup"""
+    try:
+        from services.memory_consolidation_service import shutdown_consolidation_queue
+        shutdown_consolidation_queue()
+        print("🧠 Memory system shutdown complete")
+    except Exception as e:
+        print(f"⚠️  Error during memory system shutdown: {e}")
+
 # Add real-time status endpoints if available
 if REALTIME_AVAILABLE:
     create_status_endpoint(app)
@@ -824,7 +879,48 @@ import subprocess
 import requests
 import time
 import logging
+import logging.config
 from pathlib import Path
+
+# Configure logging for memory system and other services
+LOGGING_CONFIG = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'default': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        },
+        'detailed': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+        }
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'default',
+            'level': 'INFO'
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'memory_system.log',
+            'formatter': 'detailed',
+            'level': 'DEBUG'
+        }
+    },
+    'loggers': {
+        'services.memory_service': {'level': 'DEBUG', 'handlers': ['console', 'file'], 'propagate': False},
+        'services.memory_extraction_service': {'level': 'DEBUG', 'handlers': ['console', 'file'], 'propagate': False},
+        'services.memory_consolidation_service': {'level': 'INFO', 'handlers': ['console', 'file'], 'propagate': False},
+        'services.model_manager': {'level': 'INFO', 'handlers': ['console', 'file'], 'propagate': False},
+        'api.routes_chat': {'level': 'DEBUG', 'handlers': ['console', 'file'], 'propagate': False},
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO'
+    }
+}
+
+logging.config.dictConfig(LOGGING_CONFIG)
 
 # Initialize logger for health monitoring
 logger = logging.getLogger(__name__)

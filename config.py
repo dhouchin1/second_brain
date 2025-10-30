@@ -309,6 +309,66 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices('capture_dedup_window_days', 'CAPTURE_DEDUP_WINDOW_DAYS')
     )
 
+    # Memory System Settings
+    memory_extraction_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices('memory_extraction_enabled', 'MEMORY_EXTRACTION_ENABLED')
+    )
+    memory_extraction_threshold: int = Field(
+        default=4,  # Min messages before extraction
+        validation_alias=AliasChoices('memory_extraction_threshold', 'MEMORY_EXTRACTION_THRESHOLD')
+    )
+    memory_retention_days: int = Field(
+        default=365,
+        validation_alias=AliasChoices('memory_retention_days', 'MEMORY_RETENTION_DAYS')
+    )
+    memory_consolidation_batch_size: int = Field(
+        default=10,
+        validation_alias=AliasChoices('memory_consolidation_batch_size', 'MEMORY_CONSOLIDATION_BATCH_SIZE')
+    )
+
+    # Model Selection (can be overridden at runtime)
+    chat_model: str = Field(
+        default="llama3.2",
+        validation_alias=AliasChoices('chat_model', 'CHAT_MODEL')
+    )
+    memory_extraction_model: str = Field(
+        default="llama3.1:8b",
+        validation_alias=AliasChoices('memory_extraction_model', 'MEMORY_EXTRACTION_MODEL')
+    )
+    summarization_model: str = Field(
+        default="llama3.2",
+        validation_alias=AliasChoices('summarization_model', 'SUMMARIZATION_MODEL')
+    )
+    title_generation_model: str = Field(
+        default="llama3.2",
+        validation_alias=AliasChoices('title_generation_model', 'TITLE_GENERATION_MODEL')
+    )
+
+    # Memory Retrieval Settings
+    max_episodic_memories: int = Field(
+        default=5,
+        validation_alias=AliasChoices('max_episodic_memories', 'MAX_EPISODIC_MEMORIES')
+    )
+    max_semantic_memories: int = Field(
+        default=10,
+        validation_alias=AliasChoices('max_semantic_memories', 'MAX_SEMANTIC_MEMORIES')
+    )
+    max_document_results: int = Field(
+        default=5,
+        validation_alias=AliasChoices('max_document_results', 'MAX_DOCUMENT_RESULTS')
+    )
+    episodic_importance_threshold: float = Field(
+        default=0.3,
+        validation_alias=AliasChoices('episodic_importance_threshold', 'EPISODIC_IMPORTANCE_THRESHOLD')
+    )
+
+    # Vector Search Settings for Memories
+    memory_vector_enabled: bool = Field(
+        default=True,  # Set to False if sqlite-vec not available
+        validation_alias=AliasChoices('memory_vector_enabled', 'MEMORY_VECTOR_ENABLED')
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -329,3 +389,7 @@ class Settings(BaseSettings):
         return self
 
 settings = Settings()
+
+def get_settings() -> Settings:
+    """Get application settings instance"""
+    return settings

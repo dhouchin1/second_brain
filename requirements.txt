@@ -40,3 +40,6 @@ readability-lxml>=0.8.1
 # Security & Rate Limiting
 slowapi>=0.1.9
 redis>=5.0.0
+
+# Memory augmentation dependencies
+aiofiles>=23.0.0

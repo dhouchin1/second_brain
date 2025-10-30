@@ -257,3 +257,138 @@ class SearchService:
             print(f"[search] Hybrid search failed for '{sanitized_query}': {e}")
             # Fallback to semantic search only
             return self._semantic(q, k)
+
+    # ─── Memory-Augmented Search ────────────────────────────────────────────
+    def search_with_memory(
+        self,
+        user_id: int,
+        query: str,
+        mode: str = "hybrid",
+        limit: int = 20,
+        include_memory: bool = True
+    ) -> dict:
+        """
+        Enhanced search that includes episodic and semantic memories
+
+        Args:
+            user_id: User ID for memory retrieval
+            query: Search query
+            mode: Search mode ('hybrid', 'keyword', 'semantic')
+            limit: Max results
+            include_memory: Whether to include memory context
+
+        Returns:
+            {
+                'documents': [...],  # Document results
+                'episodic': [...],   # Relevant past interactions
+                'semantic': [...],   # User facts
+                'context_summary': '...'  # Assembled context for LLM
+            }
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Get regular document results (existing search)
+        doc_results = self.search(query, mode=mode, k=limit)
+
+        # Convert Row objects to dicts for easier JSON serialization
+        documents = []
+        for row in doc_results:
+            doc = dict(row)
+            documents.append(doc)
+
+        if not include_memory:
+            return {
+                'documents': documents,
+                'episodic': [],
+                'semantic': [],
+                'context_summary': ''
+            }
+
+        # Get memory service
+        try:
+            from services.memory_service import MemoryService
+            from services.embeddings import get_embeddings_service
+            from database import get_db_connection
+            from config import get_settings
+
+            settings = get_settings()
+            memory = MemoryService(get_db_connection(), get_embeddings_service())
+
+            # Search episodic memories
+            episodic_results = memory.search_episodic(
+                user_id=user_id,
+                query=query,
+                limit=settings.max_episodic_memories,
+                min_importance=settings.episodic_importance_threshold
+            )
+
+            # Search semantic memories
+            semantic_results = memory.search_semantic(
+                user_id=user_id,
+                query=query,
+                limit=settings.max_semantic_memories
+            )
+
+            # Build context summary
+            context_summary = self._build_context_summary(
+                documents=documents[:settings.max_document_results],
+                episodic=episodic_results,
+                semantic=semantic_results
+            )
+
+            logger.debug(f"Memory-augmented search: {len(documents)} docs, {len(episodic_results)} episodes, {len(semantic_results)} facts")
+
+            return {
+                'documents': documents,
+                'episodic': episodic_results,
+                'semantic': semantic_results,
+                'context_summary': context_summary
+            }
+
+        except Exception as e:
+            logger.error(f"Memory search failed, falling back to documents only: {e}")
+            return {
+                'documents': documents,
+                'episodic': [],
+                'semantic': [],
+                'context_summary': ''
+            }
+
+    def _build_context_summary(
+        self,
+        documents: list,
+        episodic: list,
+        semantic: list
+    ) -> str:
+        """Build LLM context from all memory sources"""
+
+        parts = []
+
+        # User profile (semantic)
+        if semantic:
+            parts.append("USER PROFILE:")
+            for fact in semantic:
+                parts.append(f"- {fact['fact']}")
+            parts.append("")
+
+        # Past interactions (episodic)
+        if episodic:
+            parts.append("RELEVANT PAST INTERACTIONS:")
+            for ep in episodic:
+                summary = ep.get('summary', ep.get('content', ''))[:200]
+                parts.append(f"- {summary}")
+            parts.append("")
+
+        # Knowledge base (documents)
+        if documents:
+            parts.append("RELEVANT KNOWLEDGE BASE:")
+            for i, doc in enumerate(documents, 1):
+                title = doc.get('title', 'Untitled')
+                # Try to get content from different possible fields
+                content = doc.get('body', doc.get('content', doc.get('snippet', '')))
+                snippet = content[:200] if content else ''
+                parts.append(f"[{i}] {title}: {snippet}...")
+            parts.append("")
+
+        return "\n".join(parts)

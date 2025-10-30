@@ -151,3 +151,14 @@ class Embeddings:
     @staticmethod
     def pack_f32(array: list[float]) -> bytes:
         return struct.pack('<%sf' % len(array), *array)
+
+
+# Global instance
+_embeddings_service = None
+
+def get_embeddings_service() -> Embeddings:
+    """Get global embeddings service instance"""
+    global _embeddings_service
+    if _embeddings_service is None:
+        _embeddings_service = Embeddings()
+    return _embeddings_service

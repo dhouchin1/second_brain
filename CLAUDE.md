@@ -91,10 +91,42 @@ The application uses a service-oriented architecture for modularity:
 - **`search_index.py`** - Advanced search indexer with chunk-based FTS5 and sqlite-vec integration
 - **`embeddings.py`** - Sentence transformer embedding generation and management
 
+#### Memory System Services (Production Ready ✅)
+- **`memory_service.py`** - Episodic and semantic memory management with FTS5 and vector search
+- **`memory_extraction_service.py`** - LLM-powered memory extraction from conversations
+- **`memory_consolidation_service.py`** - Background queue for async memory processing
+- **`model_manager.py`** - Dynamic model selection for different AI tasks
+- **`security_utils.py`** - Prompt injection protection and PII sanitization
+
 #### Advanced Capture Services (Implemented, Testing In Progress ⚠️)
 - **`advanced_capture_service.py`** - OCR, PDF, YouTube processing with dependency management
 - **`enhanced_apple_shortcuts_service.py`** - iOS/macOS integration with location and context data
 - **`enhanced_discord_service.py`** - Discord bot integration with thread processing
+
+#### Experimental Features (Not Integrated, Future Products 🔬)
+**Status:** These features are complete but not integrated into the main application. They represent potential standalone products or future enhancements.
+
+- **Workflow Automation** (services/workflow_engine.py, intelligent_router.py, smart_automation_router.py, smart_templates_router.py)
+  - Complete workflow orchestration system with triggers, conditions, and actions
+  - Rule-based content routing and template system
+  - ~93KB of code, ~2,500 lines
+  - **Future:** Could become "second-brain-workflows" - a Zapier/n8n alternative
+
+- **Note Relationships & Clustering** (note_relationships.py, automated_relationships.py)
+  - Semantic similarity clustering with DBSCAN algorithms
+  - Graph database and network analysis features
+  - Automated topic detection and relationship discovery
+  - ~54KB of code, ~1,800 lines
+  - Requires: scikit-learn, networkx
+  - **Future:** Could become "knowledge-graph-builder" - an Obsidian plugin alternative
+
+- **Search Benchmarking** (automated_benchmarking.py, services/search_benchmarking_router.py)
+  - Automated testing and performance regression monitoring
+  - CI/CD quality assurance infrastructure
+  - ~18KB of code, ~1,200 lines
+  - **Future:** Could become testing infrastructure or GitHub Actions workflows
+
+**Note:** See `EXTRACT_TO_SEPARATE_REPO.md` for detailed analysis and extraction plans.
 
 #### Supporting Services
 - **`audio_queue.py`** - Asynchronous audio processing queue

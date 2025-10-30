@@ -104,3 +104,8 @@ local/
 .local/
 dev_notes.md
 TODO_private.md
+
+# Cleanup and inventory files (local analysis only)
+REMOVABLE_FILES_INVENTORY.md
+CLEANUP_ANALYSIS.md
+FILES_TO_DELETE.md
