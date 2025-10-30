@@ -2653,20 +2653,18 @@
             showSearchLoading();
 
             try {
-                // Build search request with proper format for SearchRouter
-                const searchRequest = {
-                    query: query,
-                    filters: buildSearchFilters(),
-                    limit: 20
-                };
-                
-                // Call search API using POST with SearchRequest body
-                const response = await fetch('/api/search', {
-                    method: 'POST',
+                // Build search URL with query parameters to match backend GET endpoint
+                const params = new URLSearchParams({
+                    q: query,
+                    limit: '20'
+                });
+
+                // Call search API using GET with query parameters
+                const response = await fetch(`/api/search?${params.toString()}`, {
+                    method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(searchRequest)
+                    }
                 });
 
                 if (response.ok) {

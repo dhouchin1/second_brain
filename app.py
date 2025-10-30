@@ -4423,6 +4423,22 @@ def verify_webhook_token_local(credentials: HTTPAuthorizationCredentials = Depen
 # Frontend API Endpoints for Dashboard v2
 # ============================================================================
 
+@app.get("/api/auth/token")
+async def get_auth_token(request: Request, current_user: User = Depends(get_current_user)):
+    """
+    Get authentication token for the current user.
+    Used by frontend for authenticated audio file access.
+    """
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    return {
+        "token": token,
+        "user_id": current_user.id,
+        "username": current_user.username
+    }
+
 @app.get("/api/notes")
 async def api_get_notes(
     limit: int = Query(10, le=1000),
