@@ -1,0 +1,123 @@
+{# Search Bar Component with HTMX
+
+Usage:
+    {% include 'components/search/search_bar.html' %}
+#}
+
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 border border-gray-200 dark:border-gray-700"
+     x-data="{
+         showFilters: false,
+         filters: {
+             type: '',
+             dateRange: '',
+             tags: []
+         }
+     }">
+
+    <!-- Main Search Input -->
+    <div class="relative">
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+        </div>
+
+        <input type="text"
+               name="q"
+               placeholder="Search your notes..."
+               class="block w-full pl-10 pr-12 py-3 border border-gray-300 dark:border-gray-600 rounded-lg
+                      bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100
+                      focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+               hx-get="/api/search/fragment"
+               hx-trigger="keyup changed delay:300ms, search"
+               hx-target="#search-results"
+               hx-indicator="#search-indicator"
+               autocomplete="off">
+
+        <!-- Loading Indicator -->
+        <div id="search-indicator" class="htmx-indicator absolute inset-y-0 right-0 pr-3 flex items-center">
+            <svg class="animate-spin h-5 w-5 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+
+        <!-- Filter Toggle Button -->
+        <button @click="showFilters = !showFilters"
+                type="button"
+                class="absolute inset-y-0 right-0 pr-3 flex items-center"
+                :class="{ 'text-indigo-600': showFilters, 'text-gray-400': !showFilters }">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Advanced Filters -->
+    <div x-show="showFilters"
+         x-transition
+         class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-4">
+
+        <!-- Note Type Filter -->
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Type
+            </label>
+            <select x-model="filters.type"
+                    name="type"
+                    class="block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100
+                           shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    hx-get="/api/search/fragment"
+                    hx-trigger="change"
+                    hx-include="[name='q']"
+                    hx-target="#search-results">
+                <option value="">All Types</option>
+                <option value="text">Text</option>
+                <option value="audio">Audio</option>
+                <option value="image">Image</option>
+                <option value="url">URL</option>
+                <option value="pdf">PDF</option>
+            </select>
+        </div>
+
+        <!-- Date Range Filter -->
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Date Range
+            </label>
+            <select x-model="filters.dateRange"
+                    name="date_range"
+                    class="block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100
+                           shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    hx-get="/api/search/fragment"
+                    hx-trigger="change"
+                    hx-include="[name='q'], [name='type']"
+                    hx-target="#search-results">
+                <option value="">All Time</option>
+                <option value="today">Today</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
+            </select>
+        </div>
+
+        <!-- Sort Order -->
+        <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Sort By
+            </label>
+            <select name="sort"
+                    class="block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100
+                           shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                    hx-get="/api/search/fragment"
+                    hx-trigger="change"
+                    hx-include="[name='q'], [name='type'], [name='date_range']"
+                    hx-target="#search-results">
+                <option value="relevance">Relevance</option>
+                <option value="date_desc">Newest First</option>
+                <option value="date_asc">Oldest First</option>
+                <option value="title">Title A-Z</option>
+            </select>
+        </div>
+    </div>
+</div>

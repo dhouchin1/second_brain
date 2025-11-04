@@ -218,6 +218,25 @@ def highlight(text, term):
     return Markup(pattern.sub(lambda m: f"<mark>{escape(m.group(0))}</mark>", text))
 templates.env.filters['highlight'] = highlight
 
+# Date formatting filter for HTMX templates
+def format_datetime(value):
+    """Format datetime string for display"""
+    if not value:
+        return ""
+    try:
+        from datetime import datetime
+        if isinstance(value, str):
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        else:
+            dt = value
+
+        # Format as "Jan 1, 2024 at 3:45 PM"
+        return dt.strftime("%b %d, %Y at %I:%M %p")
+    except Exception:
+        return str(value)
+
+templates.env.filters['format_datetime'] = format_datetime
+
 def get_conn():
     return sqlite3.connect(str(settings.db_path))
 
@@ -5628,6 +5647,219 @@ def analytics_dashboard(request: Request):
         "request": request,
         "current_user": current_user
     })
+
+# ============================================================================
+# HTMX Dashboard Routes
+# ============================================================================
+
+@app.get("/dashboard/htmx")
+def dashboard_htmx(request: Request):
+    """Serve the HTMX-powered dashboard"""
+    from services.htmx_helpers import is_htmx_request
+
+    current_user = get_current_user_silent(request)
+    if not current_user:
+        return RedirectResponse("/login", status_code=302)
+
+    return templates.TemplateResponse("pages/dashboard_htmx.html", {
+        "request": request,
+        "current_user": current_user,
+        "config": settings
+    })
+
+
+@app.get("/api/notes/fragment")
+async def get_notes_fragment(
+    request: Request,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """Return HTML fragment of notes for HTMX infinite scroll"""
+    from services.htmx_helpers import is_htmx_request
+
+    conn = get_conn()
+    c = conn.cursor()
+
+    try:
+        rows = c.execute(
+            """
+            SELECT
+                id, title, body, content, summary, tags, type, status,
+                timestamp, created_at, updated_at, audio_filename
+            FROM notes
+            WHERE user_id = ?
+            ORDER BY COALESCE(timestamp, created_at, updated_at) DESC
+            LIMIT ? OFFSET ?
+            """,
+            (current_user.id, limit, skip),
+        ).fetchall()
+
+        notes = []
+        col_names = [col[0] for col in c.description]
+        for row in rows:
+            note = dict(zip(col_names, row))
+            # Normalize tags
+            tags_raw = note.get("tags") or ""
+            if isinstance(tags_raw, str):
+                tags_list = [t.strip() for t in tags_raw.replace("#", " ").replace(",", " ").split() if t.strip()]
+            else:
+                tags_list = tags_raw if isinstance(tags_raw, list) else []
+            note["tags"] = tags_list
+
+            # Add processing status
+            note["processing_status"] = note.get("status", "completed")
+            note["note_type"] = note.get("type", "text")
+
+            notes.append(note)
+    finally:
+        conn.close()
+
+    return templates.TemplateResponse("components/notes/note_list.html", {
+        "request": request,
+        "notes": notes,
+        "skip": skip,
+        "limit": limit
+    })
+
+
+@app.get("/api/stats/fragment")
+async def get_stats_fragment(request: Request, current_user: User = Depends(get_current_user)):
+    """Return HTML fragment of stats widget for HTMX auto-refresh"""
+    from services.htmx_helpers import is_htmx_request
+
+    conn = get_conn()
+    c = conn.cursor()
+
+    try:
+        # Total notes
+        total_notes = c.execute(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ?",
+            (current_user.id,)
+        ).fetchone()[0]
+
+        # Notes today
+        notes_today = c.execute(
+            """
+            SELECT COUNT(*) FROM notes
+            WHERE user_id = ?
+            AND DATE(COALESCE(timestamp, created_at)) = DATE('now')
+            """,
+            (current_user.id,)
+        ).fetchone()[0]
+
+        # Processing count
+        processing = c.execute(
+            "SELECT COUNT(*) FROM notes WHERE user_id = ? AND status = 'processing'",
+            (current_user.id,)
+        ).fetchone()[0]
+
+        # Total unique tags
+        tags_result = c.execute(
+            "SELECT tags FROM notes WHERE user_id = ? AND tags IS NOT NULL",
+            (current_user.id,)
+        ).fetchall()
+
+        all_tags = set()
+        for (tags_str,) in tags_result:
+            if tags_str:
+                tag_list = [t.strip() for t in tags_str.replace("#", " ").replace(",", " ").split() if t.strip()]
+                all_tags.update(tag_list)
+
+        stats = {
+            "total_notes": total_notes,
+            "notes_today": notes_today,
+            "processing": processing,
+            "total_tags": len(all_tags)
+        }
+    finally:
+        conn.close()
+
+    return templates.TemplateResponse("components/ui/stats_widget.html", {
+        "request": request,
+        "stats": stats
+    })
+
+
+@app.get("/api/search/fragment")
+async def search_fragment(
+    request: Request,
+    q: str = Query("", description="Search query"),
+    type: Optional[str] = Query(None, description="Note type filter"),
+    date_range: Optional[str] = Query(None, description="Date range filter"),
+    sort: str = Query("relevance", description="Sort order"),
+    current_user: User = Depends(get_current_user)
+):
+    """Return HTML fragment of search results for HTMX search-as-you-type"""
+    from services.htmx_helpers import is_htmx_request
+    from services.search_adapter import get_search_service
+
+    results = []
+
+    if q:  # Only search if there's a query
+        try:
+            search_service = get_search_service()
+            search_results = search_service.search(
+                query=q,
+                user_id=current_user.id,
+                limit=50
+            )
+
+            # Convert search results to note format
+            for result in search_results:
+                note = result.copy()
+                # Normalize tags
+                tags_raw = note.get("tags") or ""
+                if isinstance(tags_raw, str):
+                    tags_list = [t.strip() for t in tags_raw.replace("#", " ").replace(",", " ").split() if t.strip()]
+                else:
+                    tags_list = tags_raw if isinstance(tags_raw, list) else []
+                note["tags"] = tags_list
+                results.append(note)
+
+            # Apply filters
+            if type:
+                results = [r for r in results if r.get("type") == type]
+
+            # Apply date range filter
+            if date_range:
+                from datetime import datetime, timedelta
+                now = datetime.now()
+                if date_range == "today":
+                    cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                elif date_range == "week":
+                    cutoff = now - timedelta(days=7)
+                elif date_range == "month":
+                    cutoff = now - timedelta(days=30)
+                elif date_range == "year":
+                    cutoff = now - timedelta(days=365)
+                else:
+                    cutoff = None
+
+                if cutoff:
+                    results = [
+                        r for r in results
+                        if datetime.fromisoformat(r.get("created_at", "1970-01-01")) >= cutoff
+                    ]
+
+            # Apply sorting
+            if sort == "date_desc":
+                results.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+            elif sort == "date_asc":
+                results.sort(key=lambda r: r.get("created_at", ""))
+            elif sort == "title":
+                results.sort(key=lambda r: r.get("title", "").lower())
+
+        except Exception as e:
+            print(f"Search error: {e}")
+            results = []
+
+    return templates.TemplateResponse("components/search/search_results.html", {
+        "request": request,
+        "results": results,
+        "query": q
+    })
+
 
 @app.get("/debug/voice")
 async def debug_voice_recording():

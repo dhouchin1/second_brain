@@ -1,0 +1,180 @@
+{% extends "base_htmx.html" %}
+
+{% block title %}Dashboard - Second Brain{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 dark:bg-gray-900"
+     hx-ext="sse"
+     sse-connect="/api/sse/notes"
+     sse-swap="new-note"
+     hx-target="#notes-list"
+     hx-swap="afterbegin">
+
+    <!-- Header -->
+    <header class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex items-center justify-between">
+                <!-- Logo & Title -->
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">Second Brain</h1>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">HTMX Edition</p>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-center gap-3">
+                    <!-- New Note Button -->
+                    <button @click="$dispatch('open-modal', { type: 'new-note' })"
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        New Note
+                    </button>
+
+                    <!-- User Menu -->
+                    <div x-data="{ open: false }" @click.outside="open = false" class="relative">
+                        <button @click="open = !open"
+                                class="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
+                            <div class="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                                {{ current_user.username[0].upper() if current_user else 'U' }}
+                            </div>
+                        </button>
+
+                        <div x-show="open"
+                             x-transition
+                             class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-10">
+                            <a href="/settings" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                                Settings
+                            </a>
+                            <a href="/logout" class="block px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+                                Logout
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Stats Section (auto-refreshes every 30s) -->
+        <div hx-get="/api/stats/fragment"
+             hx-trigger="load, every 30s"
+             hx-swap="innerHTML"
+             class="mb-8">
+            {% include 'components/ui/loading_spinner.html' with text="Loading stats..." %}
+        </div>
+
+        <!-- Quick Capture Form -->
+        <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 border border-gray-200 dark:border-gray-700"
+             x-data="{ capturing: false }">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Quick Capture</h2>
+
+            <form hx-post="/api/notes"
+                  hx-target="#notes-list"
+                  hx-swap="afterbegin"
+                  hx-on::after-request="if(event.detail.successful) this.reset()"
+                  @htmx:before-request="capturing = true"
+                  @htmx:after-request="capturing = false"
+                  class="space-y-4">
+
+                <div>
+                    <textarea name="content"
+                              placeholder="What's on your mind?"
+                              rows="3"
+                              required
+                              class="block w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100
+                                     shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                              :disabled="capturing"></textarea>
+                </div>
+
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <label class="inline-flex items-center">
+                            <input type="checkbox" name="auto_tag" checked
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Auto-tag</span>
+                        </label>
+                        <label class="inline-flex items-center">
+                            <input type="checkbox" name="generate_summary" checked
+                                   class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">AI Summary</span>
+                        </label>
+                    </div>
+
+                    <button type="submit"
+                            :disabled="capturing"
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50">
+                        <span x-show="!capturing">Capture</span>
+                        <span x-show="capturing" class="flex items-center gap-2">
+                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Capturing...
+                        </span>
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Search Section -->
+        <div class="mb-8">
+            {% include 'components/search/search_bar.html' %}
+        </div>
+
+        <!-- Search Results / Notes List -->
+        <div id="search-results">
+            <!-- Notes List (loads on page load) -->
+            <div hx-get="/api/notes/fragment?limit=20"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                {% include 'components/ui/loading_spinner.html' with text="Loading notes..." %}
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal Container (for modals triggered by HTMX) -->
+    <div id="modal-container"></div>
+
+    <!-- Offline Indicator -->
+    <div x-data="{ online: navigator.onLine }"
+         @online.window="online = true"
+         @offline.window="online = false; showToast('You are offline', 'warning')"
+         x-show="!online"
+         class="fixed bottom-4 left-4 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 px-4 py-2 rounded-lg shadow-lg border border-yellow-200 dark:border-yellow-700">
+        <div class="flex items-center gap-2">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+            </svg>
+            <span class="text-sm font-medium">Offline Mode</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Example: Custom form handling
+    document.body.addEventListener('htmx:afterRequest', function(event) {
+        if (event.detail.successful && event.detail.elt.tagName === 'FORM') {
+            // Show success toast
+            showToast('Note captured successfully!', 'success');
+        }
+    });
+
+    // Handle new notes from SSE
+    document.body.addEventListener('sse:new-note', function(event) {
+        console.log('New note received via SSE:', event.detail);
+        showToast('New note added!', 'info');
+    });
+</script>
+{% endblock %}

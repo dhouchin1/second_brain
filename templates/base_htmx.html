@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+    <title>{% block title %}Second Brain - HTMX{% endblock %}</title>
+
+    <!-- Mobile-first meta tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Second Brain">
+    <meta name="theme-color" content="#6366f1">
+
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <!-- TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- HTMX Core -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    <!-- HTMX Extensions -->
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/response-targets.js"></script>
+    {% if config.DEBUG %}
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/debug.js"></script>
+    {% endif %}
+
+    <!-- Alpine.js for local component state -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+    <!-- Static CSS Files -->
+    <link rel="stylesheet" href="/static/css/design-system.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+
+    <!-- Tailwind Configuration -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'sans': ['Inter', 'system-ui', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- HTMX Configuration -->
+    <meta name="htmx-config" content='{"defaultSwapStyle":"innerHTML","defaultSwapDelay":0,"defaultSettleDelay":20,"historyCacheSize":10}'>
+
+    <style>
+        /* HTMX Loading Indicator */
+        .htmx-indicator {
+            display: none;
+        }
+        .htmx-request .htmx-indicator,
+        .htmx-request.htmx-indicator {
+            display: inline-block;
+        }
+
+        /* Smooth transitions for HTMX swaps */
+        .htmx-swapping {
+            opacity: 0;
+            transition: opacity 200ms ease-out;
+        }
+
+        .htmx-settling {
+            opacity: 1;
+            transition: opacity 200ms ease-in;
+        }
+
+        /* Toast animations */
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+
+        .toast-enter {
+            animation: slideIn 300ms ease-out;
+        }
+
+        .toast-exit {
+            animation: slideOut 300ms ease-in;
+        }
+    </style>
+
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="h-full bg-gray-50 dark:bg-gray-900"
+      x-data="appState()"
+      @htmx:after-request="handleHtmxResponse($event)"
+      @show-toast.window="showToast($event.detail)">
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container"
+         class="fixed top-4 right-4 z-50 space-y-2"
+         x-show="toasts.length > 0"
+         x-transition>
+        <template x-for="toast in toasts" :key="toast.id">
+            <div class="toast-enter bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 max-w-sm border-l-4"
+                 :class="{
+                     'border-green-500': toast.type === 'success',
+                     'border-red-500': toast.type === 'error',
+                     'border-yellow-500': toast.type === 'warning',
+                     'border-blue-500': toast.type === 'info'
+                 }"
+                 x-show="toast.visible"
+                 x-transition>
+                <div class="flex items-start gap-3">
+                    <!-- Icon -->
+                    <div class="flex-shrink-0">
+                        <svg x-show="toast.type === 'success'" class="w-5 h-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        <svg x-show="toast.type === 'error'" class="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        <svg x-show="toast.type === 'warning'" class="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                        </svg>
+                        <svg x-show="toast.type === 'info'" class="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                    <!-- Message -->
+                    <div class="flex-1">
+                        <p class="text-sm font-medium text-gray-900 dark:text-gray-100" x-text="toast.message"></p>
+                        <p x-show="toast.detail" class="text-xs text-gray-500 dark:text-gray-400 mt-1" x-text="toast.detail"></p>
+                    </div>
+                    <!-- Close button -->
+                    <button @click="removeToast(toast.id)" class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Main Content -->
+    <div class="min-h-full">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Global Alpine.js State -->
+    <script>
+        function appState() {
+            return {
+                toasts: [],
+                toastId: 0,
+
+                // Show a toast notification
+                showToast(options) {
+                    const toast = {
+                        id: this.toastId++,
+                        message: options.message || 'Notification',
+                        detail: options.detail || '',
+                        type: options.type || 'info',
+                        visible: true,
+                        duration: options.duration || 3000
+                    };
+
+                    this.toasts.push(toast);
+
+                    // Auto-dismiss after duration
+                    if (toast.duration > 0) {
+                        setTimeout(() => {
+                            this.removeToast(toast.id);
+                        }, toast.duration);
+                    }
+                },
+
+                // Remove a toast
+                removeToast(id) {
+                    const index = this.toasts.findIndex(t => t.id === id);
+                    if (index !== -1) {
+                        this.toasts[index].visible = false;
+                        setTimeout(() => {
+                            this.toasts.splice(index, 1);
+                        }, 300);
+                    }
+                },
+
+                // Handle HTMX responses globally
+                handleHtmxResponse(event) {
+                    const xhr = event.detail.xhr;
+
+                    // Check for error responses
+                    if (xhr.status >= 400) {
+                        let message = 'An error occurred';
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            message = response.detail || response.message || message;
+                        } catch (e) {
+                            // Response is not JSON
+                        }
+
+                        this.showToast({
+                            type: 'error',
+                            message: 'Error',
+                            detail: message
+                        });
+                    }
+
+                    // Check for HX-Trigger header with events
+                    const trigger = xhr.getResponseHeader('HX-Trigger');
+                    if (trigger) {
+                        try {
+                            const events = JSON.parse(trigger);
+                            Object.entries(events).forEach(([name, detail]) => {
+                                if (name === 'showToast') {
+                                    this.showToast(detail);
+                                }
+                            });
+                        } catch (e) {
+                            // Simple trigger, not JSON
+                            if (trigger === 'showSuccessToast') {
+                                this.showToast({
+                                    type: 'success',
+                                    message: 'Success'
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Global function to show toasts from anywhere
+        window.showToast = function(message, type = 'info', detail = '') {
+            window.dispatchEvent(new CustomEvent('show-toast', {
+                detail: { message, type, detail }
+            }));
+        };
+    </script>
+
+    <!-- HTMX Event Logging (development only) -->
+    {% if config.DEBUG %}
+    <script>
+        document.body.addEventListener('htmx:beforeRequest', function(evt) {
+            console.log('HTMX Request:', evt.detail);
+        });
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            console.log('HTMX Response:', evt.detail);
+        });
+    </script>
+    {% endif %}
+
+    <!-- Custom JavaScript -->
+    <script src="/static/js/htmx-helpers.js"></script>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

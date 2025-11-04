@@ -42,6 +42,7 @@ media/
 # User content and data
 vault/
 notes/
+!templates/components/notes/
 backups/
 exports/
 archive/
@@ -104,6 +105,7 @@ local/
 .local/
 dev_notes.md
 TODO_private.md
+LOGIN_CREDENTIALS.md
 
 # Cleanup and inventory files (local analysis only)
 REMOVABLE_FILES_INVENTORY.md

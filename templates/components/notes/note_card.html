@@ -1,0 +1,118 @@
+{# Single Note Card Component
+
+Usage:
+    {% include 'components/notes/note_card.html' with note=note_object %}
+
+Props:
+    - note: Note object with id, title, content, created_at, tags, etc.
+#}
+
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 p-4 border border-gray-200 dark:border-gray-700"
+     x-data="{ expanded: false }"
+     id="note-{{ note.id }}">
+
+    <!-- Header -->
+    <div class="flex items-start justify-between gap-3 mb-2">
+        <div class="flex-1 min-w-0">
+            <!-- Title -->
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
+                {{ note.title or 'Untitled Note' }}
+            </h3>
+
+            <!-- Metadata -->
+            <div class="flex items-center gap-2 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                <span>{{ note.created_at|format_datetime }}</span>
+                {% if note.note_type %}
+                <span class="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                    {{ note.note_type }}
+                </span>
+                {% endif %}
+                {% if note.processing_status == 'processing' %}
+                <span class="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Processing
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Actions Dropdown -->
+        <div class="flex-shrink-0" x-data="{ open: false }" @click.outside="open = false">
+            <button @click="open = !open"
+                    class="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"/>
+                </svg>
+            </button>
+
+            <!-- Dropdown Menu -->
+            <div x-show="open"
+                 x-transition
+                 class="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-10">
+                <a href="/detail/{{ note.id }}"
+                   class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                    View Details
+                </a>
+                <button hx-get="/api/notes/{{ note.id }}/edit"
+                        hx-target="#modal-container"
+                        hx-swap="innerHTML"
+                        class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                    Edit
+                </button>
+                <button hx-post="/api/notes/{{ note.id }}/duplicate"
+                        hx-target="#notes-list"
+                        hx-swap="afterbegin"
+                        hx-confirm="Duplicate this note?"
+                        class="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+                    Duplicate
+                </button>
+                <button hx-delete="/api/notes/{{ note.id }}"
+                        hx-target="#note-{{ note.id }}"
+                        hx-swap="outerHTML swap:300ms"
+                        hx-confirm="Are you sure you want to delete this note?"
+                        class="block w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content Preview -->
+    <div class="prose dark:prose-invert prose-sm max-w-none">
+        <p class="text-gray-700 dark:text-gray-300 line-clamp-3"
+           :class="{ 'line-clamp-3': !expanded, 'line-clamp-none': expanded }">
+            {{ note.content[:300] }}{% if note.content|length > 300 %}...{% endif %}
+        </p>
+    </div>
+
+    <!-- Expand/Collapse Button -->
+    {% if note.content|length > 300 %}
+    <button @click="expanded = !expanded"
+            class="mt-2 text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">
+        <span x-show="!expanded">Show more</span>
+        <span x-show="expanded">Show less</span>
+    </button>
+    {% endif %}
+
+    <!-- Tags -->
+    {% if note.tags %}
+    <div class="flex flex-wrap gap-2 mt-3">
+        {% for tag in note.tags %}
+        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+            {{ tag }}
+        </span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Summary (if available) -->
+    {% if note.summary %}
+    <div class="mt-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded border-l-2 border-indigo-500">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">AI Summary</p>
+        <p class="text-sm text-gray-700 dark:text-gray-300">{{ note.summary }}</p>
+    </div>
+    {% endif %}
+</div>
